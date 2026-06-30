@@ -1,0 +1,6 @@
+{# bootstrap_vlans.j2 — Generate CLI commands to create VLANs 2-299 on Aruba 2530 #}
+{# VLAN 1 is the default VLAN and already exists; do not recreate it. #}
+{% for vlan_id in range(2, 300) %}
+vlan {{ vlan_id }}
+   name "Vlan{{ vlan_id }}"
+{% endfor %}

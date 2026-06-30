@@ -1,0 +1,35 @@
+{# port_config.j2 — Generate CLI commands for port VLAN assignments on Aruba 2530 #}
+{# #}
+{# Aruba 2530 (ArubaOS-Switch / ProVision) CLI notes: #}
+{#   - VLAN membership is configured under the VLAN context, NOT under the interface #}
+{#   - Untagged:  vlan <id> / untagged <port>  #}
+{#   - Tagged:    vlan <id> / tagged <port>     #}
+{#   - Port name: interface <port> / name "<description>" #}
+{# #}
+{# Expected host_vars structure (ports list): #}
+{#   ports: #}
+{#     - port: 1 #}
+{#       name: "Uplink-Core" #}
+{#       mode: trunk #}
+{#       untagged_vlan: 1 #}
+{#       tagged_vlans: [10, 20, 30] #}
+{# #}
+{% for p in ports %}
+{# --- Untagged VLAN assignment --- #}
+{% if p.untagged_vlan is defined %}
+vlan {{ p.untagged_vlan }}
+   untagged {{ p.port }}
+{% endif %}
+{# --- Tagged VLAN assignments (trunk ports) --- #}
+{% if p.mode == 'trunk' and p.tagged_vlans is defined %}
+{% for tvlan in p.tagged_vlans %}
+vlan {{ tvlan }}
+   tagged {{ p.port }}
+{% endfor %}
+{% endif %}
+{# --- Port description --- #}
+{% if p.name is defined and p.name %}
+interface {{ p.port }}
+   name "{{ p.name }}"
+{% endif %}
+{% endfor %}

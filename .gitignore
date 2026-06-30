@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# App runtime data (not tracked — auto-generated)
+data/switches.json
+ansible/inventory/hosts.yml
+ansible/inventory/host_vars/*.yml
+
+# Logs
+*.log
+
+# Environment
+.env
