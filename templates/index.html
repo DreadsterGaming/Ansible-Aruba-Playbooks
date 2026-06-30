@@ -19,6 +19,9 @@
         </div>
       </div>
       <div class="header-actions">
+        <button id="btn-generator" class="btn btn-warning" onclick="openGeneratorModal()">
+          <span class="btn-icon">📝</span> Playbook Generator
+        </button>
         <button id="btn-generate" class="btn btn-secondary" onclick="generateConfig()">
           <span class="btn-icon">⚙</span> Generate Config
         </button>
@@ -143,6 +146,75 @@
           <button type="submit" class="btn btn-primary" id="form-submit-btn">Add Switch</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Playbook Generator Modal -->
+  <div id="generator-modal" class="modal hidden">
+    <div class="modal-backdrop" onclick="closeGeneratorModal()"></div>
+    <div class="modal-content modal-wide">
+      <div class="modal-header">
+        <h2 id="generator-title">📝 Playbook Generator</h2>
+        <button class="modal-close" onclick="closeGeneratorModal()">✕</button>
+      </div>
+
+      <!-- Step 1: Config -->
+      <div id="gen-step-config">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="gen-name">Switch Name (für Playbook)</label>
+            <input type="text" id="gen-name" placeholder="e.g. SW-Lobby-01" value="Test-Switch">
+          </div>
+          <div class="form-group">
+            <label for="gen-model">Modell</label>
+            <select id="gen-model" onchange="genModelChanged()">
+              <option value="2530-8G">2530-8G (8 Ports)</option>
+              <option value="2530-24G" selected>2530-24G (24 Ports)</option>
+              <option value="2530-48G">2530-48G (48 Ports)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="gen-grid-wrapper">
+          <table class="port-grid">
+            <thead>
+              <tr>
+                <th class="col-port">Port</th>
+                <th class="col-name">Description</th>
+                <th class="col-mode">Mode</th>
+                <th class="col-untagged">Untagged VLAN</th>
+                <th class="col-tagged">Tagged VLANs</th>
+              </tr>
+            </thead>
+            <tbody id="gen-grid-body">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeGeneratorModal()">Abbrechen</button>
+          <button type="button" class="btn btn-primary" id="btn-gen-create" onclick="createPlaybook()">
+            🔨 Playbook erstellen
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 2: Output -->
+      <div id="gen-step-output" class="hidden">
+        <div class="gen-output-header">
+          <span class="chip" id="gen-out-filename">—</span>
+          <div class="gen-output-actions">
+            <button class="btn btn-sm btn-secondary" onclick="copyPlaybook()">📋 Kopieren</button>
+            <button class="btn btn-sm btn-primary" onclick="downloadPlaybook()">⬇️ Download</button>
+          </div>
+        </div>
+        <pre id="gen-output-code" class="gen-code-viewer"></pre>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="genBackToConfig()">← Zurück</button>
+          <button type="button" class="btn btn-primary" onclick="closeGeneratorModal()">✅ Fertig</button>
+        </div>
+      </div>
     </div>
   </div>
 

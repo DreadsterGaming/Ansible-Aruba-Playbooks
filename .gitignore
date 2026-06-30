@@ -24,6 +24,7 @@ Thumbs.db
 data/switches.json
 ansible/inventory/hosts.yml
 ansible/inventory/host_vars/*.yml
+generated_playbooks/
 
 # Logs
 *.log

@@ -12,6 +12,7 @@ import re
 import threading
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify, send_from_directory, render_template
+from jinja2 import Environment, FileSystemLoader
 
 # ---------------------------------------------------------------------------
 # App configuration
@@ -471,6 +472,134 @@ def deploy_status():
     if _last_deploy is None:
         return jsonify({"status": "none", "message": "No deployments have been run yet."})
     return jsonify(_last_deploy)
+
+
+# ---------------------------------------------------------------------------
+# Playbook Generator (preview / test without real switch)
+# ---------------------------------------------------------------------------
+GENERATED_DIR = os.path.join(BASE_DIR, "generated_playbooks")
+
+@app.route("/api/playbook/generate", methods=["POST"])
+def generate_playbook_preview():
+    """Generate a standalone Ansible playbook from a virtual switch configuration.
+    No real switch registration required — purely for preview and testing."""
+    data = request.get_json() or {}
+    name = data.get("name", "test-switch").strip()
+    model = data.get("model", "2530-24G")
+    ports = data.get("ports", [])
+
+    if not name:
+        return jsonify({"error": "Switch name is required."}), 400
+    if not ports:
+        return jsonify({"error": "At least one port configuration is required."}), 400
+
+    # Validate ports
+    for p in ports:
+        if not isinstance(p.get("port"), int):
+            return jsonify({"error": f"Invalid port entry: {p}"}), 400
+        p.setdefault("name", "")
+        p.setdefault("mode", "access")
+        p.setdefault("untagged_vlan", 1)
+        p.setdefault("tagged_vlans", [])
+
+    # --- Render CLI commands from the Jinja2 template ---
+    try:
+        tpl_dir = os.path.join(ANSIBLE_DIR, "templates")
+        env = Environment(loader=FileSystemLoader(tpl_dir))
+        template = env.get_template("port_config.j2")
+        cli_commands = template.render(ports=ports).strip()
+    except Exception as exc:
+        return jsonify({"error": f"Template rendering failed: {exc}"}), 500
+
+    # --- Build a standalone playbook YAML ---
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+    playbook_yaml = f"""---
+# ============================================
+# Aruba 2530 Port VLAN Configuration Playbook
+# Generated: {timestamp}
+# Switch: {name} ({model})
+# ============================================
+#
+# Usage:
+#   ansible-playbook -i inventory.yml {slug}_ports.yml
+#
+# Make sure your inventory.yml contains the target switch, e.g.:
+#   all:
+#     hosts:
+#       {name}:
+#         ansible_host: <SWITCH-IP>
+#         ansible_network_os: arubanetworks.aos_switch.arubaoss
+#         ansible_connection: ansible.netcommon.network_cli
+#         ansible_user: admin
+#         ansible_password: <PASSWORD>
+#         ansible_become: true
+#         ansible_become_method: enable
+
+- name: "Configure port VLANs on {name} ({model})"
+  hosts: "{name}"
+  gather_facts: false
+  connection: ansible.netcommon.network_cli
+
+  tasks:
+    - name: Apply port VLAN configuration
+      ansible.netcommon.cli_config:
+        config: |
+"""
+    # Indent CLI commands under the YAML config block (10 spaces)
+    for line in cli_commands.splitlines():
+        playbook_yaml += "          " + line + "\n"
+
+    playbook_yaml += """
+    - name: Save running configuration
+      ansible.netcommon.cli_command:
+        command: write memory
+      register: save_result
+
+    - name: Show save result
+      ansible.builtin.debug:
+        var: save_result.stdout
+"""
+
+    # --- Save to file ---
+    os.makedirs(GENERATED_DIR, exist_ok=True)
+    filename = f"{slug}_ports.yml"
+    filepath = os.path.join(GENERATED_DIR, filename)
+    with open(filepath, "w") as f:
+        f.write(playbook_yaml)
+
+    return jsonify({
+        "status": "ok",
+        "filename": filename,
+        "filepath": filepath,
+        "playbook": playbook_yaml,
+        "cli_commands": cli_commands,
+    })
+
+
+@app.route("/api/playbook/list", methods=["GET"])
+def list_generated_playbooks():
+    """List all previously generated playbook files."""
+    os.makedirs(GENERATED_DIR, exist_ok=True)
+    files = []
+    for f in sorted(os.listdir(GENERATED_DIR)):
+        if f.endswith(".yml") or f.endswith(".yaml"):
+            fp = os.path.join(GENERATED_DIR, f)
+            stat = os.stat(fp)
+            files.append({
+                "filename": f,
+                "size": stat.st_size,
+                "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+            })
+    return jsonify(files)
+
+
+@app.route("/api/playbook/download/<filename>", methods=["GET"])
+def download_playbook(filename):
+    """Download a generated playbook file."""
+    safe_name = os.path.basename(filename)
+    return send_from_directory(GENERATED_DIR, safe_name, as_attachment=True)
 
 
 # ---------------------------------------------------------------------------

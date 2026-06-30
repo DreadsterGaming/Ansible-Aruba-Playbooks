@@ -932,4 +932,61 @@ main {
     flex-direction: column;
     gap: 0;
   }
+
+  .modal-wide {
+    margin: 8px;
+    max-height: 95vh;
+  }
+}
+
+/* ============================================
+   Playbook Generator
+   ============================================ */
+.modal-wide {
+  max-width: 900px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.gen-grid-wrapper {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+}
+
+.gen-grid-wrapper .port-grid {
+  margin: 0;
+}
+
+.gen-output-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gen-output-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.gen-code-viewer {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  padding: 16px 20px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.7;
+  color: #a5d6ff;
+  max-height: 450px;
+  overflow-y: auto;
+  white-space: pre;
+  margin-bottom: 16px;
+  tab-size: 2;
 }

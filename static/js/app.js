@@ -480,3 +480,169 @@ function escapeHtml(str) {
   div.textContent = str;
   return div.innerHTML;
 }
+
+// ============================================
+// Playbook Generator
+// ============================================
+const MODEL_PORTS = { '2530-8G': 8, '2530-24G': 24, '2530-48G': 48 };
+let genLastResult = null; // stores last generated playbook data
+
+function openGeneratorModal() {
+  document.getElementById('generator-modal').classList.remove('hidden');
+  document.getElementById('gen-step-config').classList.remove('hidden');
+  document.getElementById('gen-step-output').classList.add('hidden');
+  genLastResult = null;
+  genBuildGrid();
+}
+
+function closeGeneratorModal() {
+  document.getElementById('generator-modal').classList.add('hidden');
+}
+
+function genModelChanged() {
+  genBuildGrid();
+}
+
+function genBuildGrid() {
+  const model = document.getElementById('gen-model').value;
+  const portCount = MODEL_PORTS[model] || 24;
+  const tbody = document.getElementById('gen-grid-body');
+  tbody.innerHTML = '';
+
+  for (let i = 1; i <= portCount; i++) {
+    const tr = document.createElement('tr');
+    tr.dataset.port = i;
+
+    // Port number
+    const tdPort = document.createElement('td');
+    tdPort.innerHTML = '<span class="port-number">' + i + '</span>';
+    tr.appendChild(tdPort);
+
+    // Description
+    const tdName = document.createElement('td');
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'port-name';
+    nameInput.placeholder = 'Port description…';
+    tdName.appendChild(nameInput);
+    tr.appendChild(tdName);
+
+    // Mode
+    const tdMode = document.createElement('td');
+    const modeSelect = document.createElement('select');
+    modeSelect.className = 'port-mode';
+    ['access', 'trunk'].forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m;
+      opt.textContent = m.charAt(0).toUpperCase() + m.slice(1);
+      modeSelect.appendChild(opt);
+    });
+    modeSelect.addEventListener('change', function() {
+      const row = this.closest('tr');
+      const tagged = row.querySelector('.port-tagged');
+      if (this.value === 'access') {
+        tagged.value = '';
+        tagged.disabled = true;
+      } else {
+        tagged.disabled = false;
+      }
+    });
+    tdMode.appendChild(modeSelect);
+    tr.appendChild(tdMode);
+
+    // Untagged VLAN
+    const tdUntagged = document.createElement('td');
+    const untaggedSelect = vlanSelectTemplate.cloneNode(true);
+    untaggedSelect.value = 1;
+    tdUntagged.appendChild(untaggedSelect);
+    tr.appendChild(tdUntagged);
+
+    // Tagged VLANs
+    const tdTagged = document.createElement('td');
+    const taggedInput = document.createElement('input');
+    taggedInput.type = 'text';
+    taggedInput.className = 'port-tagged tagged-input';
+    taggedInput.placeholder = 'e.g. 10,20,30';
+    taggedInput.disabled = true;
+    tdTagged.appendChild(taggedInput);
+    tr.appendChild(tdTagged);
+
+    tbody.appendChild(tr);
+  }
+}
+
+function genCollectPorts() {
+  const ports = [];
+  for (const row of document.querySelectorAll('#gen-grid-body tr')) {
+    const port = parseInt(row.dataset.port);
+    const name = row.querySelector('.port-name').value.trim();
+    const mode = row.querySelector('.port-mode').value;
+    const untaggedVlan = parseInt(row.querySelector('.port-untagged').value);
+    const taggedStr = row.querySelector('.port-tagged').value.trim();
+    const taggedVlans = mode === 'trunk' && taggedStr
+      ? taggedStr.split(',').map(v => parseInt(v.trim())).filter(v => v >= 1 && v <= 299 && !isNaN(v))
+      : [];
+    ports.push({ port, name, mode, untagged_vlan: untaggedVlan, tagged_vlans: taggedVlans });
+  }
+  return ports;
+}
+
+async function createPlaybook() {
+  const name = document.getElementById('gen-name').value.trim();
+  const model = document.getElementById('gen-model').value;
+  const ports = genCollectPorts();
+
+  if (!name) {
+    showToast('Bitte einen Switch-Namen eingeben.', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('btn-gen-create');
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Generiere…';
+
+  try {
+    const res = await apiCall('/api/playbook/generate', 'POST', { name, model, ports });
+    genLastResult = res;
+
+    // Show output
+    document.getElementById('gen-out-filename').textContent = '📄 ' + res.filename;
+    document.getElementById('gen-output-code').textContent = res.playbook;
+    document.getElementById('gen-step-config').classList.add('hidden');
+    document.getElementById('gen-step-output').classList.remove('hidden');
+
+    showToast('Playbook "' + res.filename + '" erstellt!', 'success');
+  } catch (err) {
+    showToast('Fehler: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
+}
+
+function genBackToConfig() {
+  document.getElementById('gen-step-config').classList.remove('hidden');
+  document.getElementById('gen-step-output').classList.add('hidden');
+}
+
+function copyPlaybook() {
+  if (!genLastResult) return;
+  navigator.clipboard.writeText(genLastResult.playbook).then(() => {
+    showToast('Playbook in Zwischenablage kopiert!', 'success');
+  }).catch(() => {
+    // Fallback
+    const textarea = document.createElement('textarea');
+    textarea.value = genLastResult.playbook;
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+    showToast('Playbook kopiert!', 'success');
+  });
+}
+
+function downloadPlaybook() {
+  if (!genLastResult) return;
+  window.open('/api/playbook/download/' + encodeURIComponent(genLastResult.filename));
+}
