@@ -1,0 +1,22 @@
+[Unit]
+Description=Aruba VLAN Manager — Web UI für Switch-Konfiguration
+After=network.target
+
+[Service]
+Type=simple
+User=mho
+Group=mho
+WorkingDirectory=/home/mho/Claude/Ansible
+Environment="PATH=/home/mho/Claude/Ansible/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/mho/Claude/Ansible/venv/bin/gunicorn \
+    --bind 0.0.0.0:5000 \
+    --workers 2 \
+    --timeout 300 \
+    --access-logfile - \
+    --error-logfile - \
+    app:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
