@@ -1,0 +1,13 @@
+{# ssh_keys.j2 — Deploy SSH public keys to Aruba 2530 #}
+{# #}
+{# Aruba 2530 CLI: #}
+{#   ip ssh public-key manager "<key-type> <key-data>" #}
+{#   ip ssh public-key operator "<key-type> <key-data>" #}
+{#   aaa authentication ssh login public-key #}
+{# #}
+{# Note: ip ssh public-key does an implicit APPEND — existing keys are NOT overwritten #}
+{# #}
+aaa authentication ssh login public-key local
+{%- for key in ssh_keys %}
+ip ssh public-key {{ key.access_level }} "{{ key.key_type }} {{ key.public_key }}"
+{%- endfor %}

@@ -20,10 +20,12 @@ from jinja2 import Environment, FileSystemLoader
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DATA_FILE = os.path.join(DATA_DIR, "switches.json")
+SSH_PUBLIC_KEYS_FILE = os.path.join(DATA_DIR, "ssh_public_keys.json")
 ANSIBLE_DIR = os.path.join(BASE_DIR, "ansible")
 INVENTORY_DIR = os.path.join(ANSIBLE_DIR, "inventory")
 HOST_VARS_DIR = os.path.join(INVENTORY_DIR, "host_vars")
 PLAYBOOKS_DIR = os.path.join(ANSIBLE_DIR, "playbooks")
+SSH_KEYS_DIR = os.path.join(DATA_DIR, "ssh_keys")
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.json.sort_keys = False
@@ -51,7 +53,7 @@ def add_cors_headers(response):
 # ---------------------------------------------------------------------------
 def _ensure_dirs():
     """Create data / ansible directory trees if they don't exist."""
-    for d in (DATA_DIR, INVENTORY_DIR, HOST_VARS_DIR, PLAYBOOKS_DIR):
+    for d in (DATA_DIR, SSH_KEYS_DIR, INVENTORY_DIR, HOST_VARS_DIR, PLAYBOOKS_DIR):
         os.makedirs(d, exist_ok=True)
 
 
@@ -77,8 +79,16 @@ def _save_switches(switches: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 MODEL_PORT_MAP: dict[str, int] = {
     "2530-8G": 8,
+    "2530-8G-PoE+": 8,
     "2530-24G": 24,
+    "2530-24G-PoE+": 24,
     "2530-48G": 48,
+    "2530-48G-PoE+": 48,
+    "2540-24G-PoE+": 24,
+    "2540-48G-PoE+": 48,
+    "2930F-8G-PoE+": 8,
+    "2930F-24G-PoE+": 24,
+    "2930F-48G-PoE+": 48,
 }
 
 
@@ -98,7 +108,6 @@ def _generate_ports(model: str) -> list[dict]:
         {
             "port": i,
             "name": "",
-            "mode": "access",
             "untagged_vlan": 1,
             "tagged_vlans": [],
         }
@@ -112,6 +121,26 @@ def _find_switch(switches: list[dict], switch_id: str) -> dict | None:
         if sw["id"] == switch_id:
             return sw
     return None
+
+
+def _save_ssh_key(switch_id: str, key_content: str) -> str:
+    """Save an SSH private key to disk. Returns the file path.
+    If a key already exists for this switch, it is only overwritten
+    when new content is explicitly provided."""
+    _ensure_dirs()
+    key_path = os.path.join(SSH_KEYS_DIR, f"{switch_id}.pem")
+    # Normalize line endings and ensure trailing newline
+    key_content = key_content.strip() + "\n"
+    with open(key_path, "w") as fh:
+        fh.write(key_content)
+    os.chmod(key_path, 0o600)  # SSH requires strict permissions
+    return key_path
+
+
+def _get_ssh_key_path(switch_id: str) -> str | None:
+    """Return the key file path if one exists on disk, else None."""
+    key_path = os.path.join(SSH_KEYS_DIR, f"{switch_id}.pem")
+    return key_path if os.path.isfile(key_path) else None
 
 
 # ---------------------------------------------------------------------------
@@ -140,9 +169,14 @@ def _generate_inventory_yaml(switches: list[dict]) -> str:
         lines.append(f"        {sw['name']}:")
         lines.append(f"          ansible_host: {sw['ip']}")
         lines.append(f"          ansible_network_os: arubanetworks.aos_switch.arubaoss")
-        lines.append(f"          ansible_connection: ansible.netcommon.network_cli")
+        lines.append(f"          ansible_connection: network_cli")
         lines.append(f"          ansible_user: {_yaml_quote(sw['ssh_user'])}")
-        lines.append(f"          ansible_password: {_yaml_quote(sw['ssh_password'])}")
+        ssh_key = sw.get('ssh_key', '').strip()
+        ssh_password = sw.get('ssh_password', '').strip()
+        if ssh_key:
+            lines.append(f"          ansible_ssh_private_key_file: {_yaml_quote(ssh_key)}")
+        elif ssh_password:
+            lines.append(f"          ansible_password: {_yaml_quote(ssh_password)}")
         lines.append(f"          ansible_become: true")
         lines.append(f"          ansible_become_method: enable")
     return "\n".join(lines) + "\n"
@@ -154,7 +188,6 @@ def _generate_host_vars_yaml(switch: dict) -> str:
     for p in switch.get("ports", []):
         lines.append(f"  - port: {p['port']}")
         lines.append(f"    name: {_yaml_quote(p.get('name', ''))}")
-        lines.append(f"    mode: {p['mode']}")
         lines.append(f"    untagged_vlan: {p['untagged_vlan']}")
         tagged = p.get("tagged_vlans", [])
         if tagged:
@@ -276,7 +309,7 @@ def create_switch():
         return jsonify({"error": "Request body is required."}), 400
 
     # Validate required fields
-    required = ("name", "ip", "model", "ssh_user", "ssh_password")
+    required = ("name", "ip", "model", "ssh_user")
     missing = [f for f in required if not body.get(f)]
     if missing:
         return jsonify({"error": f"Missing required fields: {', '.join(missing)}"}), 400
@@ -304,9 +337,17 @@ def create_switch():
             "model": model,
             "port_count": MODEL_PORT_MAP[model],
             "ssh_user": body["ssh_user"],
-            "ssh_password": body["ssh_password"],
+            "ssh_password": body.get("ssh_password", ""),
+            "ssh_key": "",
             "ports": _generate_ports(model),
         }
+
+        # Handle SSH key content — save to file if provided
+        ssh_key_content = body.get("ssh_key_content", "").strip()
+        if ssh_key_content:
+            key_path = _save_ssh_key(switch_id, ssh_key_content)
+            new_switch["ssh_key"] = key_path
+
         switches.append(new_switch)
         _save_switches(switches)
 
@@ -335,6 +376,13 @@ def update_switch(switch_id: str):
         for field in ("name", "ip", "model", "ssh_user", "ssh_password"):
             if field in body:
                 switch[field] = body[field]
+
+        # Handle SSH key content — only overwrite if new content provided
+        ssh_key_content = body.get("ssh_key_content", "").strip()
+        if ssh_key_content:
+            key_path = _save_ssh_key(switch_id, ssh_key_content)
+            switch["ssh_key"] = key_path
+        # If no new key content, preserve existing key path
 
         new_model = switch["model"]
         if new_model not in MODEL_PORT_MAP:
@@ -397,10 +445,6 @@ def update_ports(switch_id: str):
             if port_num is None:
                 return jsonify({"error": "Each port object must include a 'port' number."}), 400
 
-            mode = entry.get("mode", "access")
-            if mode not in ("access", "trunk"):
-                return jsonify({"error": f"Port {port_num}: mode must be 'access' or 'trunk'."}), 400
-
             tagged = entry.get("tagged_vlans", [])
             if not isinstance(tagged, list):
                 return jsonify({"error": f"Port {port_num}: tagged_vlans must be a list."}), 400
@@ -408,7 +452,6 @@ def update_ports(switch_id: str):
             validated_ports.append({
                 "port": int(port_num),
                 "name": str(entry.get("name", "")),
-                "mode": mode,
                 "untagged_vlan": int(entry.get("untagged_vlan", 1)),
                 "tagged_vlans": [int(v) for v in tagged],
             })
@@ -498,7 +541,6 @@ def generate_playbook_preview():
         if not isinstance(p.get("port"), int):
             return jsonify({"error": f"Invalid port entry: {p}"}), 400
         p.setdefault("name", "")
-        p.setdefault("mode", "access")
         p.setdefault("untagged_vlan", 1)
         p.setdefault("tagged_vlans", [])
 
@@ -515,9 +557,14 @@ def generate_playbook_preview():
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
+    # Build commands list for the playbook
+    cmd_lines = [l.strip() for l in cli_commands.splitlines() if l.strip()]
+    # Format as YAML list items (12 spaces indent for under commands:)
+    commands_yaml = "\n".join(f"          - \"{line}\"" for line in ["configure terminal"] + cmd_lines + ["exit"])
+
     playbook_yaml = f"""---
 # ============================================
-# Aruba 2530 Port VLAN Configuration Playbook
+# Aruba Port VLAN Configuration Playbook
 # Generated: {timestamp}
 # Switch: {name} ({model})
 # ============================================
@@ -525,36 +572,30 @@ def generate_playbook_preview():
 # Usage:
 #   ansible-playbook -i inventory.yml {slug}_ports.yml
 #
-# Make sure your inventory.yml contains the target switch, e.g.:
-#   all:
-#     hosts:
-#       {name}:
-#         ansible_host: <SWITCH-IP>
-#         ansible_network_os: arubanetworks.aos_switch.arubaoss
-#         ansible_connection: ansible.netcommon.network_cli
-#         ansible_user: admin
-#         ansible_password: <PASSWORD>
-#         ansible_become: true
-#         ansible_become_method: enable
+# Make sure your inventory contains the target switch with:
+#   ansible_network_os: arubanetworks.aos_switch.arubaoss
+#   ansible_connection: network_cli
 
 - name: "Configure port VLANs on {name} ({model})"
   hosts: "{name}"
   gather_facts: false
-  connection: ansible.netcommon.network_cli
+  connection: network_cli
+  collections:
+    - arubanetworks.aos_switch
+
+  vars:
+    ansible_network_os: arubanetworks.aos_switch.arubaoss
 
   tasks:
     - name: Apply port VLAN configuration
-      ansible.netcommon.cli_config:
-        config: |
-"""
-    # Indent CLI commands under the YAML config block (10 spaces)
-    for line in cli_commands.splitlines():
-        playbook_yaml += "          " + line + "\n"
+      arubaoss_command:
+        commands:
+{commands_yaml}
 
-    playbook_yaml += """
     - name: Save running configuration
-      ansible.netcommon.cli_command:
-        command: write memory
+      arubaoss_command:
+        commands:
+          - write memory
       register: save_result
 
     - name: Show save result
@@ -600,6 +641,162 @@ def download_playbook(filename):
     """Download a generated playbook file."""
     safe_name = os.path.basename(filename)
     return send_from_directory(GENERATED_DIR, safe_name, as_attachment=True)
+
+
+# ---------------------------------------------------------------------------
+# SSH Public Key Management (deploy keys TO switches for team access)
+# ---------------------------------------------------------------------------
+def _load_ssh_keys() -> list[dict]:
+    """Load SSH public keys from the JSON data file."""
+    if not os.path.exists(SSH_PUBLIC_KEYS_FILE):
+        return []
+    with open(SSH_PUBLIC_KEYS_FILE, "r") as fh:
+        data = json.load(fh)
+    return data.get("keys", [])
+
+
+def _save_ssh_keys(keys: list[dict]) -> None:
+    """Persist SSH public keys to the JSON data file."""
+    _ensure_dirs()
+    with open(SSH_PUBLIC_KEYS_FILE, "w") as fh:
+        json.dump({"keys": keys}, fh, indent=2)
+
+
+@app.route("/api/ssh-keys", methods=["GET"])
+def get_ssh_keys():
+    """Return all stored SSH public keys."""
+    with _file_lock:
+        keys = _load_ssh_keys()
+    return jsonify(keys)
+
+
+@app.route("/api/ssh-keys", methods=["POST"])
+def add_ssh_key():
+    """Add a new SSH public key.
+    Body: {name, public_key, access_level, comment}"""
+    body = request.get_json(silent=True)
+    if not body:
+        return jsonify({"error": "Request body is required."}), 400
+
+    name = body.get("name", "").strip()
+    public_key_raw = body.get("public_key", "").strip()
+    access_level = body.get("access_level", "manager")
+    comment = body.get("comment", "").strip()
+
+    if not name:
+        return jsonify({"error": "Name is required."}), 400
+    if not public_key_raw:
+        return jsonify({"error": "Public key is required."}), 400
+    if access_level not in ("manager", "operator"):
+        return jsonify({"error": "access_level must be 'manager' or 'operator'."}), 400
+
+    # Parse key: accept full "ssh-rsa AAAA... comment" or just the key data
+    parts = public_key_raw.split()
+    if len(parts) >= 2 and parts[0].startswith("ssh-"):
+        key_type = parts[0]
+        key_data = parts[1]
+        if not comment and len(parts) >= 3:
+            comment = " ".join(parts[2:])
+    else:
+        key_type = "ssh-rsa"
+        key_data = parts[0]
+
+    key_id = _slugify(name)
+    if not key_id:
+        return jsonify({"error": "Name produces an empty id."}), 400
+
+    with _file_lock:
+        keys = _load_ssh_keys()
+        # Check for duplicate id
+        if any(k["id"] == key_id for k in keys):
+            return jsonify({"error": f"A key with id '{key_id}' already exists."}), 409
+
+        new_key = {
+            "id": key_id,
+            "name": name,
+            "key_type": key_type,
+            "public_key": key_data,
+            "access_level": access_level,
+            "comment": comment,
+        }
+        keys.append(new_key)
+        _save_ssh_keys(keys)
+
+    return jsonify(new_key), 201
+
+
+@app.route("/api/ssh-keys/<key_id>", methods=["DELETE"])
+def delete_ssh_key(key_id: str):
+    """Delete an SSH public key by its id."""
+    with _file_lock:
+        keys = _load_ssh_keys()
+        original_len = len(keys)
+        keys = [k for k in keys if k["id"] != key_id]
+        if len(keys) == original_len:
+            return jsonify({"error": f"Key '{key_id}' not found."}), 404
+        _save_ssh_keys(keys)
+
+    return jsonify({"status": "ok", "message": f"Key '{key_id}' deleted."})
+
+
+@app.route("/api/ssh-keys/deploy", methods=["POST"])
+def deploy_ssh_keys():
+    """Deploy all SSH public keys to all switches via Ansible."""
+    with _file_lock:
+        keys = _load_ssh_keys()
+        switches = _load_switches()
+
+    if not keys:
+        return jsonify({"error": "No SSH keys to deploy."}), 400
+    if not switches:
+        return jsonify({"error": "No switches registered."}), 400
+
+    # Generate inventory first
+    _do_generate()
+
+    # Write SSH keys as extra vars file
+    ssh_keys_vars = {"ssh_keys": keys}
+    vars_path = os.path.join(INVENTORY_DIR, "ssh_keys_vars.json")
+    with open(vars_path, "w") as fh:
+        json.dump(ssh_keys_vars, fh)
+
+    # Run the deploy_ssh_keys playbook with extra vars
+    inventory = os.path.join(INVENTORY_DIR, "hosts.yml")
+    playbook_path = os.path.join(PLAYBOOKS_DIR, "deploy_ssh_keys.yml")
+
+    cmd = [
+        "ansible-playbook",
+        "-i", inventory,
+        playbook_path,
+        "--extra-vars", f"@{vars_path}",
+    ]
+
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=300, cwd=ANSIBLE_DIR,
+        )
+        output = result.stdout + result.stderr
+        status = "success" if result.returncode == 0 else "failed"
+    except FileNotFoundError:
+        output = "Error: ansible-playbook not found. Is Ansible installed?"
+        status = "error"
+    except subprocess.TimeoutExpired:
+        output = "Error: Playbook timed out after 300 seconds."
+        status = "error"
+    except Exception as exc:
+        output = f"Error: {exc}"
+        status = "error"
+
+    global _last_deploy
+    deploy_result = {
+        "status": status,
+        "output": output,
+        "playbook": "deploy_ssh_keys.yml",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    _last_deploy = deploy_result
+    code = 200 if status == "success" else 500
+    return jsonify(deploy_result), code
 
 
 # ---------------------------------------------------------------------------

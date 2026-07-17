@@ -111,6 +111,60 @@ function renderSwitchInfo() {
   document.getElementById('chip-ports').textContent = 'Ports: ' + sw.port_count;
 }
 
+// --- VLAN Range Helpers ---
+function parseTaggedVlans(str) {
+  // Parse "2-299" or "10,20-30,100" into a flat array of VLAN IDs
+  if (!str.trim()) return [];
+  const vlans = [];
+  for (const part of str.split(',')) {
+    const trimmed = part.trim();
+    const rangeParts = trimmed.split('-');
+    if (rangeParts.length === 2) {
+      const start = parseInt(rangeParts[0]);
+      const end = parseInt(rangeParts[1]);
+      if (!isNaN(start) && !isNaN(end) && start >= 1 && end <= 299) {
+        for (let v = start; v <= end; v++) vlans.push(v);
+      }
+    } else {
+      const v = parseInt(trimmed);
+      if (!isNaN(v) && v >= 1 && v <= 299) vlans.push(v);
+    }
+  }
+  return [...new Set(vlans)].sort((a, b) => a - b);
+}
+
+function compressVlanRange(vlans) {
+  // Compress [2,3,4,5,10,11,12] into "2-5,10-12"
+  if (!vlans || vlans.length === 0) return '';
+  const sorted = [...new Set(vlans)].sort((a, b) => a - b);
+  const ranges = [];
+  let start = sorted[0], end = sorted[0];
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i] === end + 1) {
+      end = sorted[i];
+    } else {
+      ranges.push(start === end ? '' + start : start + '-' + end);
+      start = end = sorted[i];
+    }
+  }
+  ranges.push(start === end ? '' + start : start + '-' + end);
+  return ranges.join(',');
+}
+
+function setUplink(row) {
+  const taggedInput = row.querySelector('.port-tagged');
+  const btn = row.querySelector('.btn-uplink');
+  if (taggedInput.value.trim() === '2-299') {
+    // Toggle off
+    taggedInput.value = '';
+    btn.classList.remove('active');
+  } else {
+    taggedInput.value = '2-299';
+    btn.classList.add('active');
+  }
+  markUnsaved();
+}
+
 // --- Port Grid ---
 function renderPortGrid() {
   const sw = getSwitch(activeSwitch);
@@ -137,20 +191,6 @@ function renderPortGrid() {
     tdName.appendChild(nameInput);
     tr.appendChild(tdName);
 
-    // Mode
-    const tdMode = document.createElement('td');
-    const modeSelect = document.createElement('select');
-    modeSelect.className = 'port-mode';
-    ['access', 'trunk'].forEach(m => {
-      const opt = document.createElement('option');
-      opt.value = m;
-      opt.textContent = m.charAt(0).toUpperCase() + m.slice(1);
-      if (m === p.mode) opt.selected = true;
-      modeSelect.appendChild(opt);
-    });
-    tdMode.appendChild(modeSelect);
-    tr.appendChild(tdMode);
-
     // Untagged VLAN
     const tdUntagged = document.createElement('td');
     const untaggedSelect = vlanSelectTemplate.cloneNode(true);
@@ -158,16 +198,28 @@ function renderPortGrid() {
     tdUntagged.appendChild(untaggedSelect);
     tr.appendChild(tdUntagged);
 
-    // Tagged VLANs
+    // Tagged VLANs (display compressed ranges)
     const tdTagged = document.createElement('td');
     const taggedInput = document.createElement('input');
     taggedInput.type = 'text';
     taggedInput.className = 'port-tagged tagged-input';
-    taggedInput.placeholder = 'e.g. 10,20,30';
-    taggedInput.value = (p.tagged_vlans || []).join(', ');
-    taggedInput.disabled = (p.mode !== 'trunk');
+    taggedInput.value = compressVlanRange(p.tagged_vlans || []);
+    taggedInput.placeholder = 'z.B. 10,20-30';
     tdTagged.appendChild(taggedInput);
     tr.appendChild(tdTagged);
+
+    // Uplink button
+    const tdUplink = document.createElement('td');
+    const uplinkBtn = document.createElement('button');
+    uplinkBtn.type = 'button';
+    uplinkBtn.className = 'btn-uplink';
+    uplinkBtn.textContent = '⬆ Uplink';
+    uplinkBtn.onclick = function() { setUplink(tr); };
+    // Check if this port is already an uplink
+    const tagged = p.tagged_vlans || [];
+    if (tagged.length >= 290) uplinkBtn.classList.add('active');
+    tdUplink.appendChild(uplinkBtn);
+    tr.appendChild(tdUplink);
 
     tbody.appendChild(tr);
   });
@@ -175,18 +227,6 @@ function renderPortGrid() {
 
 // --- Grid Events ---
 function onGridChange(e) {
-  const target = e.target;
-  // Handle mode change
-  if (target.classList.contains('port-mode')) {
-    const row = target.closest('tr');
-    const taggedInput = row.querySelector('.port-tagged');
-    if (target.value === 'access') {
-      taggedInput.value = '';
-      taggedInput.disabled = true;
-    } else {
-      taggedInput.disabled = false;
-    }
-  }
   markUnsaved();
 }
 
@@ -218,13 +258,10 @@ async function savePorts() {
   for (const row of document.querySelectorAll('#port-grid-body tr')) {
     const port = parseInt(row.dataset.port);
     const name = row.querySelector('.port-name').value.trim();
-    const mode = row.querySelector('.port-mode').value;
     const untaggedVlan = parseInt(row.querySelector('.port-untagged').value);
     const taggedStr = row.querySelector('.port-tagged').value.trim();
-    const taggedVlans = mode === 'trunk' && taggedStr
-      ? taggedStr.split(',').map(v => parseInt(v.trim())).filter(v => v >= 1 && v <= 299 && !isNaN(v))
-      : [];
-    ports.push({ port, name, mode, untagged_vlan: untaggedVlan, tagged_vlans: taggedVlans });
+    const taggedVlans = parseTaggedVlans(taggedStr);
+    ports.push({ port, name, untagged_vlan: untaggedVlan, tagged_vlans: taggedVlans });
   }
 
   const btn = document.getElementById('btn-save');
@@ -234,7 +271,6 @@ async function savePorts() {
 
   try {
     await apiCall('/api/switches/' + activeSwitch + '/ports', 'PUT', ports);
-    // Update local state
     sw.ports = ports;
     hasUnsavedChanges = false;
     hideSaveBar();
@@ -255,6 +291,9 @@ function openAddSwitchModal() {
   document.getElementById('switch-form').reset();
   // Reset model to default
   document.getElementById('form-model').value = '2530-24G';
+  // Hide SSH key status (no existing key for new switches)
+  document.getElementById('ssh-key-status').classList.add('hidden');
+  document.getElementById('form-ssh-key').value = '';
   document.getElementById('switch-modal').classList.remove('hidden');
 }
 
@@ -269,6 +308,14 @@ function editCurrentSwitch() {
   document.getElementById('form-model').value = sw.model;
   document.getElementById('form-user').value = sw.ssh_user;
   document.getElementById('form-password').value = sw.ssh_password || '';
+  // Show SSH key status if a key is stored, but don't expose content
+  document.getElementById('form-ssh-key').value = '';
+  const keyStatus = document.getElementById('ssh-key-status');
+  if (sw.ssh_key) {
+    keyStatus.classList.remove('hidden');
+  } else {
+    keyStatus.classList.add('hidden');
+  }
   document.getElementById('switch-modal').classList.remove('hidden');
 }
 
@@ -288,6 +335,7 @@ async function submitSwitchForm(event) {
     model: document.getElementById('form-model').value,
     ssh_user: document.getElementById('form-user').value.trim(),
     ssh_password: document.getElementById('form-password').value,
+    ssh_key_content: document.getElementById('form-ssh-key').value.trim(),
   };
 
   const btn = document.getElementById('form-submit-btn');
@@ -484,7 +532,13 @@ function escapeHtml(str) {
 // ============================================
 // Playbook Generator
 // ============================================
-const MODEL_PORTS = { '2530-8G': 8, '2530-24G': 24, '2530-48G': 48 };
+const MODEL_PORTS = {
+  '2530-8G': 8, '2530-8G-PoE+': 8,
+  '2530-24G': 24, '2530-24G-PoE+': 24,
+  '2530-48G': 48, '2530-48G-PoE+': 48,
+  '2540-24G-PoE+': 24, '2540-48G-PoE+': 48,
+  '2930F-8G-PoE+': 8, '2930F-24G-PoE+': 24, '2930F-48G-PoE+': 48,
+};
 let genLastResult = null; // stores last generated playbook data
 
 function openGeneratorModal() {
@@ -527,29 +581,6 @@ function genBuildGrid() {
     tdName.appendChild(nameInput);
     tr.appendChild(tdName);
 
-    // Mode
-    const tdMode = document.createElement('td');
-    const modeSelect = document.createElement('select');
-    modeSelect.className = 'port-mode';
-    ['access', 'trunk'].forEach(m => {
-      const opt = document.createElement('option');
-      opt.value = m;
-      opt.textContent = m.charAt(0).toUpperCase() + m.slice(1);
-      modeSelect.appendChild(opt);
-    });
-    modeSelect.addEventListener('change', function() {
-      const row = this.closest('tr');
-      const tagged = row.querySelector('.port-tagged');
-      if (this.value === 'access') {
-        tagged.value = '';
-        tagged.disabled = true;
-      } else {
-        tagged.disabled = false;
-      }
-    });
-    tdMode.appendChild(modeSelect);
-    tr.appendChild(tdMode);
-
     // Untagged VLAN
     const tdUntagged = document.createElement('td');
     const untaggedSelect = vlanSelectTemplate.cloneNode(true);
@@ -562,10 +593,19 @@ function genBuildGrid() {
     const taggedInput = document.createElement('input');
     taggedInput.type = 'text';
     taggedInput.className = 'port-tagged tagged-input';
-    taggedInput.placeholder = 'e.g. 10,20,30';
-    taggedInput.disabled = true;
+    taggedInput.placeholder = 'z.B. 10,20-30';
     tdTagged.appendChild(taggedInput);
     tr.appendChild(tdTagged);
+
+    // Uplink button
+    const tdUplink = document.createElement('td');
+    const uplinkBtn = document.createElement('button');
+    uplinkBtn.type = 'button';
+    uplinkBtn.className = 'btn-uplink';
+    uplinkBtn.textContent = '⬆ Uplink';
+    uplinkBtn.onclick = function() { setUplink(tr); };
+    tdUplink.appendChild(uplinkBtn);
+    tr.appendChild(tdUplink);
 
     tbody.appendChild(tr);
   }
@@ -576,13 +616,10 @@ function genCollectPorts() {
   for (const row of document.querySelectorAll('#gen-grid-body tr')) {
     const port = parseInt(row.dataset.port);
     const name = row.querySelector('.port-name').value.trim();
-    const mode = row.querySelector('.port-mode').value;
     const untaggedVlan = parseInt(row.querySelector('.port-untagged').value);
     const taggedStr = row.querySelector('.port-tagged').value.trim();
-    const taggedVlans = mode === 'trunk' && taggedStr
-      ? taggedStr.split(',').map(v => parseInt(v.trim())).filter(v => v >= 1 && v <= 299 && !isNaN(v))
-      : [];
-    ports.push({ port, name, mode, untagged_vlan: untaggedVlan, tagged_vlans: taggedVlans });
+    const taggedVlans = parseTaggedVlans(taggedStr);
+    ports.push({ port, name, untagged_vlan: untaggedVlan, tagged_vlans: taggedVlans });
   }
   return ports;
 }
@@ -645,4 +682,112 @@ function copyPlaybook() {
 function downloadPlaybook() {
   if (!genLastResult) return;
   window.open('/api/playbook/download/' + encodeURIComponent(genLastResult.filename));
+}
+
+// ============================================
+// SSH Public Key Management
+// ============================================
+let sshKeys = [];
+
+async function openSSHKeysModal() {
+  document.getElementById('ssh-keys-modal').classList.remove('hidden');
+  await fetchSSHKeys();
+}
+
+function closeSSHKeysModal() {
+  document.getElementById('ssh-keys-modal').classList.add('hidden');
+}
+
+async function fetchSSHKeys() {
+  try {
+    sshKeys = await apiCall('/api/ssh-keys', 'GET');
+    renderSSHKeys();
+  } catch (err) {
+    showToast('Fehler beim Laden der SSH Keys: ' + err.message, 'error');
+  }
+}
+
+function renderSSHKeys() {
+  const list = document.getElementById('ssh-keys-list');
+  if (sshKeys.length === 0) {
+    list.innerHTML = '<div class="ssh-keys-empty">Noch keine SSH Keys hinterlegt.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  sshKeys.forEach(key => {
+    const card = document.createElement('div');
+    card.className = 'ssh-key-card';
+    const keyPreview = key.public_key.substring(0, 30) + '…';
+    card.innerHTML =
+      '<div class="ssh-key-info">' +
+        '<strong>' + escapeHtml(key.name) + '</strong>' +
+        '<span class="ssh-key-level">' + key.access_level + '</span>' +
+        '<span class="ssh-key-type">' + key.key_type + '</span>' +
+        (key.comment ? '<span class="ssh-key-comment">' + escapeHtml(key.comment) + '</span>' : '') +
+        '<code class="ssh-key-preview">' + keyPreview + '</code>' +
+      '</div>' +
+      '<button class="btn btn-sm btn-danger" onclick="deleteSSHKey(\'' + key.id + '\')">🗑️</button>';
+    list.appendChild(card);
+  });
+}
+
+async function addSSHKey() {
+  const name = document.getElementById('sshkey-name').value.trim();
+  const publicKey = document.getElementById('sshkey-key').value.trim();
+  const accessLevel = document.getElementById('sshkey-level').value;
+
+  if (!name) { showToast('Bitte einen Namen eingeben.', 'error'); return; }
+  if (!publicKey) { showToast('Bitte einen Public Key eingeben.', 'error'); return; }
+
+  try {
+    await apiCall('/api/ssh-keys', 'POST', {
+      name, public_key: publicKey, access_level: accessLevel,
+    });
+    showToast('SSH Key "' + name + '" hinzugefügt!', 'success');
+    document.getElementById('sshkey-name').value = '';
+    document.getElementById('sshkey-key').value = '';
+    await fetchSSHKeys();
+  } catch (err) {
+    showToast('Fehler: ' + err.message, 'error');
+  }
+}
+
+async function deleteSSHKey(keyId) {
+  if (!confirm('SSH Key wirklich löschen?')) return;
+  try {
+    await apiCall('/api/ssh-keys/' + keyId, 'DELETE');
+    showToast('SSH Key gelöscht.', 'success');
+    await fetchSSHKeys();
+  } catch (err) {
+    showToast('Fehler: ' + err.message, 'error');
+  }
+}
+
+async function deploySSHKeys() {
+  if (sshKeys.length === 0) {
+    showToast('Keine SSH Keys zum Deployen vorhanden.', 'error');
+    return;
+  }
+  if (!confirm('SSH Keys auf ALLE registrierten Switches deployen?')) return;
+
+  const btn = document.getElementById('btn-deploy-keys');
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Deploying…';
+
+  try {
+    const res = await apiCall('/api/ssh-keys/deploy', 'POST');
+    showDeployLog(res.output || 'No output');
+    closeSSHKeysModal();
+    if (res.status === 'success') {
+      showToast('SSH Keys erfolgreich auf alle Switches deployed!', 'success');
+    } else {
+      showToast('Deploy mit Fehlern abgeschlossen.', 'error');
+    }
+  } catch (err) {
+    showToast('Deploy fehlgeschlagen: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
 }

@@ -1,29 +1,40 @@
 ---
 # bootstrap_vlans.yml
-# Creates VLANs 2-299 on all Aruba 2530 switches.
+# Creates VLANs 2-299 on Aruba switches using the arubaoss collection.
 # VLAN 1 is the default VLAN and already exists.
 #
 # Usage:
 #   ansible-playbook -i ../inventory/hosts.yml playbooks/bootstrap_vlans.yml
 #   ansible-playbook -i ../inventory/hosts.yml playbooks/bootstrap_vlans.yml --limit sw-lobby
 
-- name: Bootstrap VLANs 2-299 on Aruba 2530 switches
+- name: Bootstrap VLANs 2-299 on Aruba switches
   hosts: aruba_switches
   gather_facts: false
   connection: network_cli
+  collections:
+    - arubanetworks.aos_switch
 
   vars:
     ansible_network_os: arubanetworks.aos_switch.arubaoss
 
   tasks:
+    - name: Build VLAN creation commands
+      ansible.builtin.set_fact:
+        vlan_commands: >-
+          {{ ['configure terminal'] +
+             lookup('template', '../templates/bootstrap_vlans.j2').strip().split('\n')
+             | map('trim') | reject('equalto', '') | list +
+             ['exit'] }}
+
     - name: Create VLANs 2-299
-      ansible.netcommon.cli_config:
-        config: "{{ lookup('template', '../templates/bootstrap_vlans.j2') }}"
+      arubaoss_command:
+        commands: "{{ vlan_commands }}"
       register: vlan_result
 
     - name: Save running configuration
-      ansible.netcommon.cli_command:
-        command: write memory
+      arubaoss_command:
+        commands:
+          - write memory
       register: save_result
 
     - name: Display save result

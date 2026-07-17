@@ -456,10 +456,10 @@ main {
 
 /* Column widths */
 .col-port { width: 65px; }
-.col-name { width: 220px; }
-.col-mode { width: 120px; }
+.col-name { width: 250px; }
 .col-untagged { width: 150px; }
 .col-tagged { min-width: 200px; }
+.col-uplink { width: 85px; }
 
 /* Port number styling */
 .port-number {
@@ -526,14 +526,201 @@ main {
   letter-spacing: 0.02em;
 }
 
-.tagged-input:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
 .tagged-input::placeholder {
   color: var(--text-muted);
   font-style: italic;
+}
+
+/* Uplink Button */
+.btn-uplink {
+  padding: 4px 10px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: var(--font-family);
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.btn-uplink:hover {
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  background: rgba(99, 102, 241, 0.06);
+}
+
+.btn-uplink.active {
+  color: #fff;
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 8px rgba(99, 102, 241, 0.3);
+}
+
+/* Modal description */
+.modal-description {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  margin-bottom: 1.25rem;
+  padding: 0 4px;
+}
+
+/* SSH Keys Modal */
+.ssh-keys-list {
+  margin-bottom: 1.5rem;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.ssh-keys-empty {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.ssh-key-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  margin-bottom: 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition-fast);
+}
+
+.ssh-key-card:hover {
+  border-color: var(--border-focus);
+}
+
+.ssh-key-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+
+.ssh-key-info strong {
+  color: var(--text-primary);
+}
+
+.ssh-key-level {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--accent-primary);
+}
+
+.ssh-key-type {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.ssh-key-comment {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.ssh-key-preview {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.ssh-key-add-form {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 1.25rem;
+}
+
+.ssh-key-add-form h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  color: var(--text-primary);
+}
+
+.ssh-key-add-form textarea {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  width: 100%;
+  padding: 10px 12px;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  outline: none;
+  resize: vertical;
+  transition: border-color var(--transition-fast);
+}
+
+.ssh-key-add-form textarea:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+}
+
+/* Label hint (used for optional field descriptions) */
+.label-hint {
+  font-weight: 400;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* SSH key textarea */
+#form-ssh-key {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  resize: vertical;
+  min-height: 80px;
+  width: 100%;
+  padding: 10px 12px;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+#form-ssh-key:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+}
+
+#form-ssh-key::placeholder {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+/* SSH key status badge */
+.ssh-key-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  border-radius: var(--radius-sm);
+}
+
+.ssh-key-badge {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--color-success);
 }
 
 /* ============================================

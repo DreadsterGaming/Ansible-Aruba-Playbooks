@@ -22,6 +22,7 @@ Thumbs.db
 
 # App runtime data (not tracked — auto-generated)
 data/switches.json
+data/ssh_keys/
 ansible/inventory/hosts.yml
 ansible/inventory/host_vars/*.yml
 generated_playbooks/

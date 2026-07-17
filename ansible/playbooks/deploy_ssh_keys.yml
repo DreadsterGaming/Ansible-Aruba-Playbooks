@@ -1,0 +1,44 @@
+---
+# Deploy SSH public keys to Aruba switches using the arubaoss collection.
+# Enables key-based SSH authentication for team members.
+
+- name: Deploy SSH public keys
+  hosts: aruba_switches
+  gather_facts: false
+  connection: network_cli
+  collections:
+    - arubanetworks.aos_switch
+
+  vars:
+    ansible_network_os: arubanetworks.aos_switch.arubaoss
+
+  tasks:
+    - name: Validate SSH keys variable
+      ansible.builtin.assert:
+        that:
+          - ssh_keys is defined
+          - ssh_keys | length > 0
+        fail_msg: "No SSH keys defined for deployment."
+
+    - name: Build SSH key deployment commands
+      ansible.builtin.set_fact:
+        ssh_key_commands: >-
+          {{ ['configure terminal'] +
+             lookup('template', '../templates/ssh_keys.j2').strip().split('\n')
+             | map('trim') | reject('equalto', '') | list +
+             ['exit'] }}
+
+    - name: Deploy SSH public keys
+      arubaoss_command:
+        commands: "{{ ssh_key_commands }}"
+      register: ssh_result
+
+    - name: Save running configuration
+      arubaoss_command:
+        commands:
+          - write memory
+      register: save_result
+
+    - name: Display save result
+      ansible.builtin.debug:
+        var: save_result.stdout

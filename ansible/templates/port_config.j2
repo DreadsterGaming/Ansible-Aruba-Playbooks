@@ -10,26 +10,25 @@
 {#   ports: #}
 {#     - port: 1 #}
 {#       name: "Uplink-Core" #}
-{#       mode: trunk #}
 {#       untagged_vlan: 1 #}
 {#       tagged_vlans: [10, 20, 30] #}
 {# #}
-{% for p in ports %}
-{# --- Untagged VLAN assignment --- #}
-{% if p.untagged_vlan is defined %}
+{%- for p in ports %}
+{#- --- Untagged VLAN assignment --- -#}
+{%- if p.untagged_vlan is defined %}
 vlan {{ p.untagged_vlan }}
    untagged {{ p.port }}
-{% endif %}
-{# --- Tagged VLAN assignments (trunk ports) --- #}
-{% if p.mode == 'trunk' and p.tagged_vlans is defined %}
-{% for tvlan in p.tagged_vlans %}
+{%- endif %}
+{#- --- Tagged VLAN assignments --- -#}
+{%- if p.tagged_vlans is defined %}
+{%- for tvlan in p.tagged_vlans %}
 vlan {{ tvlan }}
    tagged {{ p.port }}
-{% endfor %}
-{% endif %}
-{# --- Port description --- #}
-{% if p.name is defined and p.name %}
+{%- endfor %}
+{%- endif %}
+{#- --- Port description --- -#}
+{%- if p.name is defined and p.name %}
 interface {{ p.port }}
    name "{{ p.name }}"
-{% endif %}
-{% endfor %}
+{%- endif %}
+{%- endfor %}

@@ -19,6 +19,9 @@
         </div>
       </div>
       <div class="header-actions">
+        <button id="btn-ssh-keys" class="btn btn-secondary" onclick="openSSHKeysModal()">
+          <span class="btn-icon">🔑</span> SSH Keys
+        </button>
         <button id="btn-generator" class="btn btn-warning" onclick="openGeneratorModal()">
           <span class="btn-icon">📝</span> Playbook Generator
         </button>
@@ -73,9 +76,9 @@
           <tr>
             <th class="col-port">Port</th>
             <th class="col-name">Description</th>
-            <th class="col-mode">Mode</th>
             <th class="col-untagged">Untagged VLAN</th>
             <th class="col-tagged">Tagged VLANs</th>
+            <th class="col-uplink"></th>
           </tr>
         </thead>
         <tbody id="port-grid-body">
@@ -126,9 +129,23 @@
         <div class="form-group">
           <label for="form-model">Model</label>
           <select id="form-model" required>
-            <option value="2530-8G">2530-8G (8 Ports)</option>
-            <option value="2530-24G" selected>2530-24G (24 Ports)</option>
-            <option value="2530-48G">2530-48G (48 Ports)</option>
+            <optgroup label="Aruba 2530">
+              <option value="2530-8G">2530-8G (8 Ports)</option>
+              <option value="2530-8G-PoE+">2530-8G-PoE+ (8 Ports)</option>
+              <option value="2530-24G" selected>2530-24G (24 Ports)</option>
+              <option value="2530-24G-PoE+">2530-24G-PoE+ (24 Ports)</option>
+              <option value="2530-48G">2530-48G (48 Ports)</option>
+              <option value="2530-48G-PoE+">2530-48G-PoE+ (48 Ports)</option>
+            </optgroup>
+            <optgroup label="Aruba 2540">
+              <option value="2540-24G-PoE+">2540-24G-PoE+ (24 Ports)</option>
+              <option value="2540-48G-PoE+">2540-48G-PoE+ (48 Ports)</option>
+            </optgroup>
+            <optgroup label="Aruba 2930F">
+              <option value="2930F-8G-PoE+">2930F-8G-PoE+ (8 Ports)</option>
+              <option value="2930F-24G-PoE+">2930F-24G-PoE+ (24 Ports)</option>
+              <option value="2930F-48G-PoE+">2930F-48G-PoE+ (48 Ports)</option>
+            </optgroup>
           </select>
         </div>
         <div class="form-row">
@@ -138,8 +155,18 @@
           </div>
           <div class="form-group">
             <label for="form-password">SSH Password</label>
-            <input type="password" id="form-password" placeholder="••••••" required>
+            <input type="password" id="form-password" placeholder="••••••">
           </div>
+        </div>
+        <div class="form-group">
+          <label for="form-ssh-key">
+            SSH Private Key <span class="label-hint">(optional, alternativ zu Passwort)</span>
+          </label>
+          <div id="ssh-key-status" class="ssh-key-status hidden">
+            <span class="ssh-key-badge">🔑 Key hinterlegt</span>
+            <span class="label-hint">— Feld leer lassen = bestehender Key bleibt erhalten</span>
+          </div>
+          <textarea id="form-ssh-key" rows="4" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"></textarea>
         </div>
         <div class="form-actions">
           <button type="button" class="btn btn-secondary" onclick="closeSwitchModal()">Cancel</button>
@@ -168,9 +195,23 @@
           <div class="form-group">
             <label for="gen-model">Modell</label>
             <select id="gen-model" onchange="genModelChanged()">
-              <option value="2530-8G">2530-8G (8 Ports)</option>
-              <option value="2530-24G" selected>2530-24G (24 Ports)</option>
-              <option value="2530-48G">2530-48G (48 Ports)</option>
+              <optgroup label="Aruba 2530">
+                <option value="2530-8G">2530-8G (8 Ports)</option>
+                <option value="2530-8G-PoE+">2530-8G-PoE+ (8 Ports)</option>
+                <option value="2530-24G" selected>2530-24G (24 Ports)</option>
+                <option value="2530-24G-PoE+">2530-24G-PoE+ (24 Ports)</option>
+                <option value="2530-48G">2530-48G (48 Ports)</option>
+                <option value="2530-48G-PoE+">2530-48G-PoE+ (48 Ports)</option>
+              </optgroup>
+              <optgroup label="Aruba 2540">
+                <option value="2540-24G-PoE+">2540-24G-PoE+ (24 Ports)</option>
+                <option value="2540-48G-PoE+">2540-48G-PoE+ (48 Ports)</option>
+              </optgroup>
+              <optgroup label="Aruba 2930F">
+                <option value="2930F-8G-PoE+">2930F-8G-PoE+ (8 Ports)</option>
+                <option value="2930F-24G-PoE+">2930F-24G-PoE+ (24 Ports)</option>
+                <option value="2930F-48G-PoE+">2930F-48G-PoE+ (48 Ports)</option>
+              </optgroup>
             </select>
           </div>
         </div>
@@ -181,9 +222,9 @@
               <tr>
                 <th class="col-port">Port</th>
                 <th class="col-name">Description</th>
-                <th class="col-mode">Mode</th>
                 <th class="col-untagged">Untagged VLAN</th>
                 <th class="col-tagged">Tagged VLANs</th>
+                <th class="col-uplink"></th>
               </tr>
             </thead>
             <tbody id="gen-grid-body">
@@ -213,6 +254,57 @@
         <div class="form-actions">
           <button type="button" class="btn btn-secondary" onclick="genBackToConfig()">← Zurück</button>
           <button type="button" class="btn btn-primary" onclick="closeGeneratorModal()">✅ Fertig</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SSH Keys Modal -->
+  <div id="ssh-keys-modal" class="modal hidden">
+    <div class="modal-backdrop" onclick="closeSSHKeysModal()"></div>
+    <div class="modal-content modal-wide">
+      <div class="modal-header">
+        <h2>🔑 SSH Public Keys</h2>
+        <button class="modal-close" onclick="closeSSHKeysModal()">✕</button>
+      </div>
+
+      <p class="modal-description">
+        Hier kannst du SSH Public Keys deiner Teammitglieder hinterlegen.
+        Mit <strong>"Deploy auf alle Switches"</strong> werden die Keys per Ansible auf alle registrierten Switches deployed.
+      </p>
+
+      <!-- Existing Keys List -->
+      <div id="ssh-keys-list" class="ssh-keys-list">
+        <!-- Dynamically populated -->
+      </div>
+
+      <!-- Add Key Form -->
+      <div class="ssh-key-add-form">
+        <h3>Neuen Key hinzufügen</h3>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="sshkey-name">Name</label>
+            <input type="text" id="sshkey-name" placeholder="z.B. Max Mustermann" required>
+          </div>
+          <div class="form-group">
+            <label for="sshkey-level">Access Level</label>
+            <select id="sshkey-level">
+              <option value="manager" selected>Manager</option>
+              <option value="operator">Operator</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="sshkey-key">Public Key</label>
+          <textarea id="sshkey-key" rows="3" placeholder="ssh-rsa AAAAB3NzaC1yc2EAAA... user@host"></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-primary" onclick="addSSHKey()">
+            ➕ Key hinzufügen
+          </button>
+          <button type="button" class="btn btn-warning" id="btn-deploy-keys" onclick="deploySSHKeys()">
+            🚀 Deploy auf alle Switches
+          </button>
         </div>
       </div>
     </div>
