@@ -7,9 +7,11 @@ Generates Ansible inventory and triggers playbook deployments.
 
 import json
 import os
+import socket
 import subprocess
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify, send_from_directory, render_template
 from jinja2 import Environment, FileSystemLoader
@@ -350,6 +352,32 @@ def get_switches():
     with _file_lock:
         switches = _load_switches()
     return jsonify(switches)
+
+
+@app.route("/api/switches/ping", methods=["GET"])
+def ping_all_switches():
+    """TCP-check port 22 on every switch IP. Returns {switch_id: 'online'|'offline'}."""
+    with _file_lock:
+        switches = _load_switches()
+
+    def _check(sw):
+        ip = sw.get("ip", "").strip()
+        if not ip:
+            return sw["id"], "offline"
+        try:
+            with socket.create_connection((ip, 22), timeout=1.5):
+                return sw["id"], "online"
+        except Exception:
+            return sw["id"], "offline"
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        futures = {pool.submit(_check, sw): sw for sw in switches}
+        for future in as_completed(futures):
+            sid, status = future.result()
+            results[sid] = status
+
+    return jsonify(results)
 
 
 @app.route("/api/switches/import_inventory", methods=["POST"])

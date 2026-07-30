@@ -47,6 +47,18 @@ function toggleTheme() {
 // --- Init ---
 document.addEventListener('DOMContentLoaded', init);
 
+let switchStatus = {}; // { switch_id: 'online' | 'offline' | 'unknown' }
+
+async function pollPingStatus() {
+  try {
+    const res = await fetch('/api/switches/ping');
+    if (res.ok) {
+      switchStatus = await res.json();
+      renderTabs(); // redraw sidebar with updated dots
+    }
+  } catch (_) { /* ignore network errors */ }
+}
+
 async function init() {
   initTheme();
   await fetchVlanNames(false);
@@ -66,6 +78,9 @@ async function init() {
       e.returnValue = '';
     }
   });
+  // Ping all switches now, then every 30 seconds
+  pollPingStatus();
+  setInterval(pollPingStatus, 30000);
 }
 
 // --- API Helper ---
@@ -119,9 +134,13 @@ function renderTabs() {
   if (countEl) countEl.textContent = switches.length + ' Switch' + (switches.length !== 1 ? 'es' : '');
 
   visible.forEach(sw => {
+    const status = switchStatus[sw.id] || 'unknown';
+    const dotClass = status === 'online' ? 'status-dot online' :
+                     status === 'offline' ? 'status-dot offline' : 'status-dot unknown';
     const item = document.createElement('button');
     item.className = 'sidebar-item' + (sw.id === activeSwitch ? ' active' : '');
     item.innerHTML =
+      '<span class="' + dotClass + '"></span>' +
       '<span class="sidebar-item-name">' + sw.name + '</span>' +
       '<span class="sidebar-item-ip">' + (sw.ip || '—') + '</span>';
     item.onclick = () => selectSwitch(sw.id);
