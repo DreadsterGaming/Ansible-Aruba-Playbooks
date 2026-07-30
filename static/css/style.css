@@ -397,13 +397,14 @@ header h1 {
 
 .status-dot {
   position: absolute;
-  left: 9px;
+  left: 8px;
   top: 50%;
   transform: translateY(-50%);
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+  z-index: 3;
 }
 .status-dot.online {
   background-color: #10b981;

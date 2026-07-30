@@ -390,8 +390,16 @@ def ping_all_switches():
         ip = sw.get("ip", "").strip()
         if not ip:
             return sw["id"], "offline"
+        # 1. Try ICMP ping first
         try:
-            with socket.create_connection((ip, 22), timeout=1.5):
+            res = subprocess.run(["ping", "-c", "1", "-W", "1", ip], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if res.returncode == 0:
+                return sw["id"], "online"
+        except Exception:
+            pass
+        # 2. Fallback to TCP port 22 (SSH)
+        try:
+            with socket.create_connection((ip, 22), timeout=1.0):
                 return sw["id"], "online"
         except Exception:
             return sw["id"], "offline"
