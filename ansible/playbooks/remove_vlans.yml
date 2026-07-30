@@ -18,7 +18,7 @@
 
   tasks:
     - name: Get current VLANs from switch
-      arubaoss_command:
+      arubanetworks.aos_switch.arubaoss_command:
         commands:
           - show vlan
       register: sh_vlan
@@ -42,13 +42,13 @@
           {{ list_cmds | to_json }}
 
     - name: Execute targeted VLAN deletion
-      arubaoss_command:
+      arubanetworks.aos_switch.arubaoss_command:
         commands: "{{ del_cmds | from_json }}"
       when: (del_cmds | from_json) | length > 2
       register: del_res
 
     - name: Save running configuration
-      arubaoss_command:
+      arubanetworks.aos_switch.arubaoss_command:
         commands:
           - write memory
       register: save_result

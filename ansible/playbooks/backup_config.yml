@@ -22,7 +22,7 @@
       delegate_to: localhost
 
     - name: Fetch running configuration
-      arubaoss_command:
+      arubanetworks.aos_switch.arubaoss_command:
         commands:
           - show running-config
       register: run_cfg

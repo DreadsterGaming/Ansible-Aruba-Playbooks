@@ -37,12 +37,12 @@
              ['exit'] }}
 
     - name: Apply port VLAN configuration
-      arubaoss_command:
+      arubanetworks.aos_switch.arubaoss_command:
         commands: "{{ port_commands }}"
       register: port_result
 
     - name: Save running configuration
-      arubaoss_command:
+      arubanetworks.aos_switch.arubaoss_command:
         commands:
           - write memory
       register: save_result

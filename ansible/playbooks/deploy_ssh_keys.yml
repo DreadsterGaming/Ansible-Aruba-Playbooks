@@ -29,12 +29,12 @@
              ['exit'] }}
 
     - name: Deploy SSH public keys
-      arubaoss_command:
+      arubanetworks.aos_switch.arubaoss_command:
         commands: "{{ ssh_key_commands }}"
       register: ssh_result
 
     - name: Save running configuration
-      arubaoss_command:
+      arubanetworks.aos_switch.arubaoss_command:
         commands:
           - write memory
       register: save_result

@@ -27,12 +27,12 @@
              ['exit'] }}
 
     - name: Create VLANs 2-299
-      arubaoss_command:
+      arubanetworks.aos_switch.arubaoss_command:
         commands: "{{ vlan_commands }}"
       register: vlan_result
 
     - name: Save running configuration
-      arubaoss_command:
+      arubanetworks.aos_switch.arubaoss_command:
         commands:
           - write memory
       register: save_result
