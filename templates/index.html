@@ -41,92 +41,102 @@
     </div>
   </header>
 
-  <main id="app-main">
-    <!-- Switch Tabs -->
-    <div id="switch-tabs" class="switch-tabs">
-      <!-- Dynamically populated switch tabs -->
-      <button id="btn-add-switch" class="tab-add" onclick="openAddSwitchModal()">
-        <span>+</span> Add Switch
-      </button>
-      <button id="btn-import-inventory" class="tab-add tab-import" onclick="openImportInventoryModal()" title="Geräte aus einer bestehenden Ansible Inventory Datei importieren">
-        <span>📥</span> Inventory Import
-      </button>
-    </div>
-
-    <!-- Switch Info Bar -->
-    <div id="switch-info" class="switch-info hidden">
-      <div class="info-chips">
-        <span class="chip" id="chip-ip">IP: —</span>
-        <span class="chip" id="chip-model">Model: —</span>
-        <span class="chip" id="chip-ports">Ports: —</span>
-        <span class="chip chip-interactive" id="chip-hostname" onclick="renameCurrentSwitchHostname()" title="Klicken, um den Switch-Hostname zu ändern">🏷️ Hostname: —</span>
-      </div>
-      <div class="info-actions">
-        <button class="btn btn-sm btn-secondary" onclick="renameCurrentSwitchHostname()" title="Switch Hostname benennen / ändern">🏷️ Hostname umbenennen</button>
-        <button class="btn btn-sm btn-secondary" onclick="backupCurrentSwitchConfig()" title="Komplette Konfiguration (show running-config) als Datei herunterladen">📥 Config Backup</button>
-        <button class="btn btn-sm btn-secondary" onclick="editCurrentSwitch()">✏️ Edit</button>
-        <button class="btn btn-sm btn-warning" onclick="bootstrapCurrentSwitch()">⚡ Bootstrap VLANs</button>
-        <button class="btn btn-sm btn-danger" onclick="removeVlansFromSwitch()" title="Benutzerdefinierte VLANs vom Switch löschen">🧹 VLANs löschen</button>
-        <button class="btn btn-sm btn-primary" onclick="deployCurrentSwitch()">🚀 Deploy</button>
-        <button class="btn btn-sm btn-danger" onclick="deleteCurrentSwitch()">🗑️ Delete</button>
-      </div>
-    </div>
-
-    <!-- Empty State -->
-    <div id="empty-state" class="empty-state">
-      <div class="empty-icon">🔌</div>
-      <h2>No Switches Registered</h2>
-      <p>Add your first Aruba 2530 switch to get started</p>
-      <button class="btn btn-primary btn-lg" onclick="openAddSwitchModal()">
-        <span>+</span> Add Switch
-      </button>
-    </div>
-
-    <!-- Port Grid -->
-    <div id="port-grid-container" class="port-grid-container hidden">
-      <!-- Interactive DHCP Client VLAN Card -->
-      <div class="dhcp-vlan-card">
-        <div class="dhcp-vlan-info">
-          <span class="dhcp-icon">🌐</span>
-          <div>
-            <strong>DHCP Client (Management VLAN)</strong>
-            <span>Erzeugt automatisch den Befehl: <code>vlan X ip address dhcp-bootp</code></span>
-          </div>
+  <div id="app-layout">
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-search-wrap">
+          <span class="sidebar-search-icon">🔍</span>
+          <input type="text" id="sidebar-search" placeholder="Switch suchen…" oninput="filterSidebarSwitches(this.value)" autocomplete="off">
         </div>
-        <div class="dhcp-vlan-input-wrapper">
-          <label for="active-dhcp-vlan">VLAN ID:</label>
-          <input type="number" id="active-dhcp-vlan" min="1" max="299" placeholder="Keins (aus)" onchange="onDhcpVlanChange(this.value)">
+        <div id="sidebar-count" class="sidebar-count">0 Switches</div>
+      </div>
+      <div id="sidebar-list" class="sidebar-list">
+        <!-- dynamically populated -->
+      </div>
+      <div class="sidebar-actions">
+        <button class="btn btn-sm btn-secondary" style="width:100%" onclick="openAddSwitchModal()">+ Add Switch</button>
+        <button class="btn btn-sm tab-import" style="width:100%;margin-top:6px" onclick="openImportInventoryModal()">📥 Inventory Import</button>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main id="app-main">
+      <!-- Switch Info Bar -->
+      <div id="switch-info" class="switch-info hidden">
+        <div class="info-chips">
+          <span class="chip" id="chip-ip">IP: —</span>
+          <span class="chip" id="chip-model">Model: —</span>
+          <span class="chip" id="chip-ports">Ports: —</span>
+          <span class="chip chip-interactive" id="chip-hostname" onclick="renameCurrentSwitchHostname()" title="Klicken, um den Switch-Hostname zu ändern">🏷️ Hostname: —</span>
+        </div>
+        <div class="info-actions">
+          <button class="btn btn-sm btn-secondary" onclick="renameCurrentSwitchHostname()" title="Switch Hostname benennen / ändern">🏷️ Hostname</button>
+          <button class="btn btn-sm btn-secondary" onclick="backupCurrentSwitchConfig()" title="Komplette Konfiguration (show running-config) als Datei herunterladen">📥 Backup</button>
+          <button class="btn btn-sm btn-secondary" onclick="editCurrentSwitch()">✏️ Edit</button>
+          <button class="btn btn-sm btn-warning" onclick="bootstrapCurrentSwitch()">⚡ Bootstrap</button>
+          <button class="btn btn-sm btn-danger" onclick="removeVlansFromSwitch()" title="Benutzerdefinierte VLANs vom Switch löschen">🧹 VLANs löschen</button>
+          <button class="btn btn-sm btn-primary" onclick="deployCurrentSwitch()">🚀 Deploy</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteCurrentSwitch()">🗑️ Delete</button>
         </div>
       </div>
 
-      <table id="port-grid" class="port-grid">
-        <thead>
-          <tr>
-            <th class="col-check"><input type="checkbox" id="check-all-ports" title="Alle auswählen" onchange="toggleAllPorts(this)"></th>
-            <th class="col-port">Port</th>
-            <th class="col-name">Description</th>
-            <th class="col-untagged">Untagged VLAN</th>
-            <th class="col-tagged">Tagged VLANs</th>
-            <th class="col-trust" title="interface X dhcp-snooping trust">DHCP Trust 🛡️</th>
-            <th class="col-uplink"></th>
-          </tr>
-        </thead>
-        <tbody id="port-grid-body">
-          <!-- Dynamically populated -->
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Save Bar (sticky bottom) -->
-    <div id="save-bar" class="save-bar hidden">
-      <div class="save-bar-content">
-        <span id="save-status" class="save-status">Unsaved changes</span>
-        <button id="btn-save" class="btn btn-primary" onclick="savePorts()">
-          💾 Save Changes
+      <!-- Empty State -->
+      <div id="empty-state" class="empty-state">
+        <div class="empty-icon">🔌</div>
+        <h2>No Switches Registered</h2>
+        <p>Add your first Aruba 2530 switch to get started</p>
+        <button class="btn btn-primary btn-lg" onclick="openAddSwitchModal()">
+          <span>+</span> Add Switch
         </button>
       </div>
-    </div>
-  </main>
+
+      <!-- Port Grid -->
+      <div id="port-grid-container" class="port-grid-container hidden">
+        <!-- Interactive DHCP Client VLAN Card -->
+        <div class="dhcp-vlan-card">
+          <div class="dhcp-vlan-info">
+            <span class="dhcp-icon">🌐</span>
+            <div>
+              <strong>DHCP Client (Management VLAN)</strong>
+              <span>Erzeugt automatisch den Befehl: <code>vlan X ip address dhcp-bootp</code></span>
+            </div>
+          </div>
+          <div class="dhcp-vlan-input-wrapper">
+            <label for="active-dhcp-vlan">VLAN ID:</label>
+            <input type="number" id="active-dhcp-vlan" min="1" max="299" placeholder="Keins (aus)" onchange="onDhcpVlanChange(this.value)">
+          </div>
+        </div>
+
+        <table id="port-grid" class="port-grid">
+          <thead>
+            <tr>
+              <th class="col-check"><input type="checkbox" id="check-all-ports" title="Alle auswählen" onchange="toggleAllPorts(this)"></th>
+              <th class="col-port">Port</th>
+              <th class="col-name">Description</th>
+              <th class="col-untagged">Untagged VLAN</th>
+              <th class="col-tagged">Tagged VLANs</th>
+              <th class="col-trust" title="interface X dhcp-snooping trust">DHCP Trust 🛡️</th>
+              <th class="col-uplink"></th>
+            </tr>
+          </thead>
+          <tbody id="port-grid-body">
+            <!-- Dynamically populated -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Save Bar (sticky bottom) -->
+      <div id="save-bar" class="save-bar hidden">
+        <div class="save-bar-content">
+          <span id="save-status" class="save-status">Unsaved changes</span>
+          <button id="btn-save" class="btn btn-primary" onclick="savePorts()">
+            💾 Save Changes
+          </button>
+        </div>
+      </div>
+    </main>
+  </div>
 
   <!-- Deploy Log Panel (slide-up) -->
   <div id="deploy-log" class="deploy-log hidden">

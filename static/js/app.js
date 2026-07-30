@@ -100,19 +100,45 @@ function getSwitch(id) {
 }
 
 // --- Tabs ---
+let _sidebarFilter = '';
+
 function renderTabs() {
-  const container = document.getElementById('switch-tabs');
-  const addBtn = document.getElementById('btn-add-switch');
-  // Remove old tabs (keep the add button)
-  container.querySelectorAll('.tab').forEach(t => t.remove());
-  // Add tabs before the add button
-  switches.forEach(sw => {
-    const tab = document.createElement('button');
-    tab.className = 'tab' + (sw.id === activeSwitch ? ' active' : '');
-    tab.textContent = sw.name;
-    tab.onclick = () => selectSwitch(sw.id);
-    container.insertBefore(tab, addBtn);
+  // Render into sidebar list instead of horizontal tabs
+  const list = document.getElementById('sidebar-list');
+  if (!list) return;
+  list.innerHTML = '';
+
+  const q = _sidebarFilter.toLowerCase();
+  const visible = switches.filter(sw =>
+    sw.name.toLowerCase().includes(q) ||
+    (sw.ip || '').includes(q) ||
+    (sw.hostname || '').toLowerCase().includes(q)
+  );
+
+  const countEl = document.getElementById('sidebar-count');
+  if (countEl) countEl.textContent = switches.length + ' Switch' + (switches.length !== 1 ? 'es' : '');
+
+  visible.forEach(sw => {
+    const item = document.createElement('button');
+    item.className = 'sidebar-item' + (sw.id === activeSwitch ? ' active' : '');
+    item.innerHTML =
+      '<span class="sidebar-item-name">' + sw.name + '</span>' +
+      '<span class="sidebar-item-ip">' + (sw.ip || '—') + '</span>';
+    item.onclick = () => selectSwitch(sw.id);
+    list.appendChild(item);
   });
+
+  if (visible.length === 0 && q) {
+    const empty = document.createElement('div');
+    empty.className = 'sidebar-no-results';
+    empty.textContent = 'Kein Treffer für "' + q + '"';
+    list.appendChild(empty);
+  }
+}
+
+function filterSidebarSwitches(value) {
+  _sidebarFilter = value || '';
+  renderTabs();
 }
 
 function selectSwitch(id) {
