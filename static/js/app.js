@@ -8,6 +8,7 @@ let activeSwitch = null;
 let hasUnsavedChanges = false;
 let deployLogExpanded = true;
 let customVlanNames = {};
+let _sidebarFilter = '';
 
 // Pre-build a template <select> for VLAN 1-299 (cloned per port row for performance)
 const vlanSelectTemplate = document.createElement('select');
@@ -150,12 +151,14 @@ function toggleSelectSwitch(id, checked) {
 }
 
 function toggleSelectAllSwitches(checked) {
-  const q = _sidebarFilter.toLowerCase();
-  const visible = switches.filter(sw =>
-    sw.name.toLowerCase().includes(q) ||
-    (sw.ip || '').includes(q) ||
-    (sw.hostname || '').toLowerCase().includes(q)
-  );
+  const q = (_sidebarFilter || '').toLowerCase().trim();
+  const visible = switches.filter(sw => {
+    if (!sw) return false;
+    const sName = String(sw.name || '').toLowerCase();
+    const sIp = String(sw.ip || '').toLowerCase();
+    const sHost = String(sw.hostname || '').toLowerCase();
+    return !q || sName.includes(q) || sIp.includes(q) || sHost.includes(q);
+  });
 
   visible.forEach(sw => {
     if (checked) {
