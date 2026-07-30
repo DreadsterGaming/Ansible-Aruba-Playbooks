@@ -184,12 +184,14 @@ function renderTabs() {
   if (!list) return;
   list.innerHTML = '';
 
-  const q = _sidebarFilter.toLowerCase();
-  const visible = switches.filter(sw =>
-    sw.name.toLowerCase().includes(q) ||
-    (sw.ip || '').includes(q) ||
-    (sw.hostname || '').toLowerCase().includes(q)
-  );
+  const q = (_sidebarFilter || '').toLowerCase().trim();
+  const visible = switches.filter(sw => {
+    if (!sw) return false;
+    const sName = String(sw.name || '').toLowerCase();
+    const sIp = String(sw.ip || '').toLowerCase();
+    const sHost = String(sw.hostname || '').toLowerCase();
+    return !q || sName.includes(q) || sIp.includes(q) || sHost.includes(q);
+  });
 
   const countEl = document.getElementById('sidebar-count');
   if (countEl) countEl.textContent = switches.length + ' Switch' + (switches.length !== 1 ? 'es' : '');
@@ -199,6 +201,8 @@ function renderTabs() {
     const dotClass = status === 'online' ? 'status-dot online' :
                      status === 'offline' ? 'status-dot offline' : 'status-dot unknown';
     const isChecked = selectedSwitchIds.has(sw.id);
+    const displayName = sw.name || sw.hostname || sw.ip || sw.id || 'Unbenannter Switch';
+    const displayIp = sw.ip || '—';
 
     const item = document.createElement('button');
     item.className = 'sidebar-item' + (sw.id === activeSwitch ? ' active' : '');
@@ -207,8 +211,8 @@ function renderTabs() {
       '<span class="' + dotClass + '"></span>' +
       '<input type="checkbox" class="sidebar-switch-check"' + (isChecked ? ' checked' : '') + ' title="Diesen Switch zum Deployen markieren">' +
       '<div class="sidebar-item-info">' +
-        '<span class="sidebar-item-name">' + sw.name + '</span>' +
-        '<span class="sidebar-item-ip">' + (sw.ip || '—') + '</span>' +
+        '<span class="sidebar-item-name">' + displayName + '</span>' +
+        '<span class="sidebar-item-ip">' + displayIp + '</span>' +
       '</div>';
 
     const chk = item.querySelector('.sidebar-switch-check');
