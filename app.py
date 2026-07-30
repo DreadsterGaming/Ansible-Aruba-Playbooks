@@ -382,34 +382,39 @@ def get_switches():
 
 @app.route("/api/switches/ping", methods=["GET"])
 def ping_all_switches():
-    """TCP-check port 22 on every switch IP. Returns {switch_id: 'online'|'offline'}."""
+    """Check online reachability (ICMP ping + TCP 22) for all switches in parallel."""
     with _file_lock:
         switches = _load_switches()
 
     def _check(sw):
-        ip = sw.get("ip", "").strip()
+        ip = str(sw.get("ip", "")).strip()
+        sw_id = str(sw.get("id", "")).strip()
+        name = str(sw.get("name", "")).strip()
         if not ip:
-            return sw["id"], "offline"
+            return sw_id, name, "offline"
         # 1. Try ICMP ping first
         try:
-            res = subprocess.run(["ping", "-c", "1", "-W", "1", ip], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            res = subprocess.run(["ping", "-c", "1", "-W", "1", ip], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
             if res.returncode == 0:
-                return sw["id"], "online"
+                return sw_id, name, "online"
         except Exception:
             pass
         # 2. Fallback to TCP port 22 (SSH)
         try:
             with socket.create_connection((ip, 22), timeout=1.0):
-                return sw["id"], "online"
+                return sw_id, name, "online"
         except Exception:
-            return sw["id"], "offline"
+            return sw_id, name, "offline"
 
     results = {}
-    with ThreadPoolExecutor(max_workers=20) as pool:
+    with ThreadPoolExecutor(max_workers=50) as pool:
         futures = {pool.submit(_check, sw): sw for sw in switches}
         for future in as_completed(futures):
-            sid, status = future.result()
-            results[sid] = status
+            sid, sname, status = future.result()
+            if sid:
+                results[sid] = status
+            if sname:
+                results[sname] = status
 
     return jsonify(results)
 

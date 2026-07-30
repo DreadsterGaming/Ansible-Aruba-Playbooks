@@ -54,9 +54,23 @@ async function pollPingStatus() {
     const res = await fetch('/api/switches/ping');
     if (res.ok) {
       switchStatus = await res.json();
-      renderTabs(); // redraw sidebar with updated dots
+      updateStatusDotsOnly();
     }
-  } catch (_) { /* ignore network errors */ }
+  } catch (err) {
+    console.error('Ping status error:', err);
+  }
+}
+
+function updateStatusDotsOnly() {
+  switches.forEach(sw => {
+    const item = document.querySelector(`.sidebar-item[data-id="${sw.id}"]`);
+    if (!item) return;
+    const dot = item.querySelector('.status-dot');
+    if (!dot) return;
+    const status = switchStatus[sw.id] || switchStatus[sw.name] || 'unknown';
+    dot.className = status === 'online' ? 'status-dot online' :
+                    status === 'offline' ? 'status-dot offline' : 'status-dot unknown';
+  });
 }
 
 async function init() {
@@ -181,13 +195,14 @@ function renderTabs() {
   if (countEl) countEl.textContent = switches.length + ' Switch' + (switches.length !== 1 ? 'es' : '');
 
   visible.forEach(sw => {
-    const status = switchStatus[sw.id] || 'unknown';
+    const status = switchStatus[sw.id] || switchStatus[sw.name] || 'unknown';
     const dotClass = status === 'online' ? 'status-dot online' :
                      status === 'offline' ? 'status-dot offline' : 'status-dot unknown';
     const isChecked = selectedSwitchIds.has(sw.id);
 
     const item = document.createElement('button');
     item.className = 'sidebar-item' + (sw.id === activeSwitch ? ' active' : '');
+    item.dataset.id = sw.id;
     item.innerHTML =
       '<span class="' + dotClass + '"></span>' +
       '<input type="checkbox" class="sidebar-switch-check"' + (isChecked ? ' checked' : '') + ' title="Diesen Switch zum Deployen markieren">' +
