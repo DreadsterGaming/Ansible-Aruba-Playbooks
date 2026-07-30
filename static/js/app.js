@@ -62,12 +62,12 @@ async function pollPingStatus() {
 }
 
 function updateStatusDotsOnly() {
-  switches.forEach(sw => {
-    const item = document.querySelector(`.sidebar-item[data-id="${sw.id}"]`);
-    if (!item) return;
+  document.querySelectorAll('.sidebar-item').forEach(item => {
+    const sid = item.dataset.id;
     const dot = item.querySelector('.status-dot');
-    if (!dot) return;
-    const status = switchStatus[sw.id] || switchStatus[sw.name] || 'unknown';
+    if (!dot || !sid) return;
+    const sw = getSwitch(sid);
+    const status = switchStatus[sid] || (sw ? switchStatus[sw.name] : '') || 'unknown';
     dot.className = status === 'online' ? 'status-dot online' :
                     status === 'offline' ? 'status-dot offline' : 'status-dot unknown';
   });
@@ -229,6 +229,7 @@ function renderTabs() {
   }
 
   updateSelectedCountUI();
+  updateStatusDotsOnly();
 }
 
 function filterSidebarSwitches(value) {
