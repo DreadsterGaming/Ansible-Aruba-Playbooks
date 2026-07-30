@@ -1,0 +1,34 @@
+---
+# backup_config.yml
+# Fetch running configuration from Aruba switches and save to local backups dir.
+
+- name: Backup switch running configuration
+  hosts: aruba_switches
+  gather_facts: false
+  connection: network_cli
+  collections:
+    - arubanetworks.aos_switch
+
+  vars:
+    ansible_network_os: arubanetworks.aos_switch.arubaoss
+    backup_dir: "{{ playbook_dir }}/../../data/backups"
+
+  tasks:
+    - name: Ensure backups directory exists locally
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+
+    - name: Fetch running configuration
+      arubaoss_command:
+        commands:
+          - show running-config
+      register: run_cfg
+
+    - name: Save configuration locally on controller
+      ansible.builtin.copy:
+        content: "{{ run_cfg.stdout[0] }}"
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}.cfg"
+      delegate_to: localhost

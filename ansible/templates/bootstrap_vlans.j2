@@ -1,6 +1,24 @@
-{# bootstrap_vlans.j2 — Generate CLI commands to create VLANs 2-299 on Aruba 2530 #}
-{# VLAN 1 is the default VLAN and already exists; do not recreate it. #}
+{# bootstrap_vlans.j2 — Generate single-line CLI commands to create VLANs 2-299 on Aruba 2530 #}
+{# VLAN 1 is the default VLAN and already exists; do not recreate it unless renaming. #}
+{% set vnames = custom_vlan_names | default({}) %}
+{% if '1' in vnames %}
+{% set vinfo1 = vnames['1'] %}
+{% set vname1 = vinfo1.name if (vinfo1 is mapping and vinfo1.name is defined) else (vinfo1 if vinfo1 is string else "") %}
+{% set dhcp1 = vinfo1 is mapping and vinfo1.dhcp_bootp is defined and (vinfo1.dhcp_bootp == true or vinfo1.dhcp_bootp == 'true' or vinfo1.dhcp_bootp == True) %}
+{% if vname1 %}
+vlan 1 name "{{ vname1 }}"
+{% endif %}
+{% if dhcp1 %}
+vlan 1 ip address dhcp-bootp
+{% endif %}
+{% endif %}
 {% for vlan_id in range(2, 300) %}
-vlan {{ vlan_id }}
-   name "Vlan{{ vlan_id }}"
+{% set vid_str = vlan_id | string %}
+{% set vinfo = vnames[vid_str] if vid_str in vnames else None %}
+{% set vname = vinfo.name if (vinfo is mapping and vinfo.name is defined) else (vinfo if vinfo is string else ("Vlan" ~ vlan_id)) %}
+{% set dhcp = vinfo is mapping and vinfo.dhcp_bootp is defined and (vinfo.dhcp_bootp == true or vinfo.dhcp_bootp == 'true' or vinfo.dhcp_bootp == True) %}
+vlan {{ vlan_id }} name "{{ vname }}"
+{% if dhcp %}
+vlan {{ vlan_id }} ip address dhcp-bootp
+{% endif %}
 {% endfor %}

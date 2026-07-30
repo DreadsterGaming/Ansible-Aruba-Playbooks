@@ -1,0 +1,27 @@
+---
+# set_hostname.yml
+# Update global hostname on Aruba switch.
+
+- name: Set switch hostname
+  hosts: aruba_switches
+  gather_facts: false
+  connection: network_cli
+  collections:
+    - arubanetworks.aos_switch
+
+  vars:
+    ansible_network_os: arubanetworks.aos_switch.arubaoss
+
+  tasks:
+    - name: Apply hostname to switch
+      arubaoss_command:
+        commands:
+          - configure terminal
+          - 'hostname "{{ new_hostname }}"'
+          - exit
+      when: new_hostname is defined and new_hostname != ""
+
+    - name: Save configuration
+      arubaoss_command:
+        commands:
+          - write memory

@@ -22,7 +22,7 @@
       ansible.builtin.set_fact:
         vlan_commands: >-
           {{ ['configure terminal'] +
-             lookup('template', '../templates/bootstrap_vlans.j2').strip().split('\n')
+             lookup('template', '../templates/bootstrap_vlans.j2').splitlines()
              | map('trim') | reject('equalto', '') | list +
              ['exit'] }}
 

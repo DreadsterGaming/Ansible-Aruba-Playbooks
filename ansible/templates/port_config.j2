@@ -1,34 +1,56 @@
-{# port_config.j2 — Generate CLI commands for port VLAN assignments on Aruba 2530 #}
+{# port_config.j2 — Generate single-line CLI commands for port VLAN assignments on Aruba 2530 #}
 {# #}
 {# Aruba 2530 (ArubaOS-Switch / ProVision) CLI notes: #}
-{#   - VLAN membership is configured under the VLAN context, NOT under the interface #}
-{#   - Untagged:  vlan <id> / untagged <port>  #}
-{#   - Tagged:    vlan <id> / tagged <port>     #}
-{#   - Port name: interface <port> / name "<description>" #}
+{#   - Using single-line configuration mode commands from global (config)# mode #}
+{#   - Untagged:  vlan <id> untagged <port> #}
+{#   - Tagged:    vlan <id-range> tagged <port> #}
+{#   - Port name: interface <port> name "<description>" #}
 {# #}
-{# Expected host_vars structure (ports list): #}
-{#   ports: #}
-{#     - port: 1 #}
-{#       name: "Uplink-Core" #}
-{#       untagged_vlan: 1 #}
-{#       tagged_vlans: [10, 20, 30] #}
+{# Ports with default config (VLAN 1, no tagged, no name) are skipped. #}
+{# Only ports that have been explicitly configured will generate commands. #}
 {# #}
-{%- for p in ports %}
-{#- --- Untagged VLAN assignment --- -#}
-{%- if p.untagged_vlan is defined %}
-vlan {{ p.untagged_vlan }}
-   untagged {{ p.port }}
-{%- endif %}
-{#- --- Tagged VLAN assignments --- -#}
-{%- if p.tagged_vlans is defined %}
-{%- for tvlan in p.tagged_vlans %}
-vlan {{ tvlan }}
-   tagged {{ p.port }}
-{%- endfor %}
-{%- endif %}
-{#- --- Port description --- -#}
-{%- if p.name is defined and p.name %}
-interface {{ p.port }}
-   name "{{ p.name }}"
-{%- endif %}
-{%- endfor %}
+{% if switch_hostname is defined and switch_hostname %}
+hostname "{{ switch_hostname }}"
+{% endif %}
+{% if custom_vlan_names is defined and custom_vlan_names %}
+{% for vid_str, vinfo in custom_vlan_names.items() %}
+{% set vname = vinfo.name if (vinfo is mapping and vinfo.name is defined) else (vinfo if vinfo is string else "") %}
+{% set dhcp_on = vinfo is mapping and vinfo.dhcp_bootp is defined and (vinfo.dhcp_bootp == true or vinfo.dhcp_bootp == 'true' or vinfo.dhcp_bootp == True) %}
+{% if vname %}
+vlan {{ vid_str }} name "{{ vname }}"
+{% endif %}
+{% if dhcp_on %}
+vlan {{ vid_str }} ip address dhcp-bootp
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if dhcp_vlan is defined and dhcp_vlan %}
+vlan {{ dhcp_vlan }} ip address dhcp-bootp
+{% endif %}
+{% for p in ports %}
+{% set has_tagged = p.tagged_vlans is defined and p.tagged_vlans | length > 0 %}
+{% set has_name = p.name is defined and p.name %}
+{% set non_default_vlan = p.untagged_vlan is defined and p.untagged_vlan != 1 %}
+{% set has_trust = p.dhcp_snooping_trust is defined and (p.dhcp_snooping_trust == true or p.dhcp_snooping_trust == 'true' or p.dhcp_snooping_trust == True) %}
+{% if non_default_vlan or has_tagged or has_name or has_trust %}
+{# --- Untagged VLAN assignment --- #}
+{% if p.untagged_vlan is defined %}
+vlan {{ p.untagged_vlan }} untagged {{ p.port }}
+{% endif %}
+{# --- Tagged VLAN assignments (compressed range syntax) --- #}
+{% if has_tagged %}
+{% set tag_str = p.tagged_vlans_str if (p.tagged_vlans_str is defined and p.tagged_vlans_str) else (p.tagged_vlans | join(',')) %}
+vlan {{ tag_str }} tagged {{ p.port }}
+{% endif %}
+{# --- Port description --- #}
+{% if has_name %}
+interface {{ p.port }} name "{{ p.name }}"
+{% endif %}
+{# --- DHCP Snooping Trust --- #}
+{% if has_trust %}
+interface {{ p.port }} dhcp-snooping trust
+{% elif (has_name or has_tagged or non_default_vlan) %}
+no interface {{ p.port }} dhcp-snooping trust
+{% endif %}
+{% endif %}
+{% endfor %}

@@ -1,0 +1,54 @@
+---
+# remove_vlans.yml
+# Dynamically queries existing VLANs and deletes targeted custom VLANs from Aruba switches.
+#
+# Usage:
+#   ansible-playbook -i ../inventory/hosts.yml playbooks/remove_vlans.yml --limit sw-lobby -e '{"target_vlan_ids": [15, 22]}'
+
+- name: Remove custom VLANs from Aruba switches
+  hosts: aruba_switches
+  gather_facts: false
+  connection: network_cli
+  collections:
+    - arubanetworks.aos_switch
+
+  vars:
+    ansible_network_os: arubanetworks.aos_switch.arubaoss
+    target_vlan_ids: []
+
+  tasks:
+    - name: Get current VLANs from switch
+      arubaoss_command:
+        commands:
+          - show vlan
+      register: sh_vlan
+
+    - name: Build targeted VLAN delete commands
+      ansible.builtin.set_fact:
+        del_cmds: >-
+          {%- set list_cmds = ['configure terminal'] -%}
+          {%- set target_list = target_vlan_ids | default([]) -%}
+          {%- for line in sh_vlan.stdout[0].splitlines() -%}
+            {%- set parts = line.split() -%}
+            {%- if parts | length >= 2 and parts[0].isdigit() and parts[0] != '1' -%}
+              {%- set vid = parts[0] | int -%}
+              {%- if vid in target_list or (vid | string) in target_list -%}
+                {%- set item = {'command': 'no vlan ' ~ vid, 'prompt': 'Do you want to continue', 'answer': 'y'} -%}
+                {%- set _ = list_cmds.append(item) -%}
+              {%- endif -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set _ = list_cmds.append('exit') -%}
+          {{ list_cmds | to_json }}
+
+    - name: Execute targeted VLAN deletion
+      arubaoss_command:
+        commands: "{{ del_cmds | from_json }}"
+      when: (del_cmds | from_json) | length > 2
+      register: del_res
+
+    - name: Save running configuration
+      arubaoss_command:
+        commands:
+          - write memory
+      register: save_result

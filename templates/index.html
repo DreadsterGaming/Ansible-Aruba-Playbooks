@@ -19,6 +19,12 @@
         </div>
       </div>
       <div class="header-actions">
+        <button id="btn-theme-toggle" class="btn btn-secondary" onclick="toggleTheme()" title="Zwischen Dark- und Light-Mode wechseln">
+          <span id="theme-icon">🌞 Light Mode</span>
+        </button>
+        <button id="btn-vlans" class="btn btn-secondary" onclick="openVlanNamesModal()">
+          <span class="btn-icon">🏷️</span> VLAN Names
+        </button>
         <button id="btn-ssh-keys" class="btn btn-secondary" onclick="openSSHKeysModal()">
           <span class="btn-icon">🔑</span> SSH Keys
         </button>
@@ -42,6 +48,9 @@
       <button id="btn-add-switch" class="tab-add" onclick="openAddSwitchModal()">
         <span>+</span> Add Switch
       </button>
+      <button id="btn-import-inventory" class="tab-add tab-import" onclick="openImportInventoryModal()" title="Geräte aus einer bestehenden Ansible Inventory Datei importieren">
+        <span>📥</span> Inventory Import
+      </button>
     </div>
 
     <!-- Switch Info Bar -->
@@ -50,10 +59,14 @@
         <span class="chip" id="chip-ip">IP: —</span>
         <span class="chip" id="chip-model">Model: —</span>
         <span class="chip" id="chip-ports">Ports: —</span>
+        <span class="chip chip-interactive" id="chip-hostname" onclick="renameCurrentSwitchHostname()" title="Klicken, um den Switch-Hostname zu ändern">🏷️ Hostname: —</span>
       </div>
       <div class="info-actions">
+        <button class="btn btn-sm btn-secondary" onclick="renameCurrentSwitchHostname()" title="Switch Hostname benennen / ändern">🏷️ Hostname umbenennen</button>
+        <button class="btn btn-sm btn-secondary" onclick="backupCurrentSwitchConfig()" title="Komplette Konfiguration (show running-config) als Datei herunterladen">📥 Config Backup</button>
         <button class="btn btn-sm btn-secondary" onclick="editCurrentSwitch()">✏️ Edit</button>
         <button class="btn btn-sm btn-warning" onclick="bootstrapCurrentSwitch()">⚡ Bootstrap VLANs</button>
+        <button class="btn btn-sm btn-danger" onclick="removeVlansFromSwitch()" title="Benutzerdefinierte VLANs vom Switch löschen">🧹 VLANs löschen</button>
         <button class="btn btn-sm btn-primary" onclick="deployCurrentSwitch()">🚀 Deploy</button>
         <button class="btn btn-sm btn-danger" onclick="deleteCurrentSwitch()">🗑️ Delete</button>
       </div>
@@ -71,13 +84,30 @@
 
     <!-- Port Grid -->
     <div id="port-grid-container" class="port-grid-container hidden">
+      <!-- Interactive DHCP Client VLAN Card -->
+      <div class="dhcp-vlan-card">
+        <div class="dhcp-vlan-info">
+          <span class="dhcp-icon">🌐</span>
+          <div>
+            <strong>DHCP Client (Management VLAN)</strong>
+            <span>Erzeugt automatisch den Befehl: <code>vlan X ip address dhcp-bootp</code></span>
+          </div>
+        </div>
+        <div class="dhcp-vlan-input-wrapper">
+          <label for="active-dhcp-vlan">VLAN ID:</label>
+          <input type="number" id="active-dhcp-vlan" min="1" max="299" placeholder="Keins (aus)" onchange="onDhcpVlanChange(this.value)">
+        </div>
+      </div>
+
       <table id="port-grid" class="port-grid">
         <thead>
           <tr>
+            <th class="col-check"><input type="checkbox" id="check-all-ports" title="Alle auswählen" onchange="toggleAllPorts(this)"></th>
             <th class="col-port">Port</th>
             <th class="col-name">Description</th>
             <th class="col-untagged">Untagged VLAN</th>
             <th class="col-tagged">Tagged VLANs</th>
+            <th class="col-trust" title="interface X dhcp-snooping trust">DHCP Trust 🛡️</th>
             <th class="col-uplink"></th>
           </tr>
         </thead>
@@ -107,6 +137,34 @@
     <pre id="deploy-log-content" class="deploy-log-content"></pre>
   </div>
 
+  <!-- Import Inventory Modal -->
+  <div id="import-inventory-modal" class="modal hidden">
+    <div class="modal-backdrop" onclick="closeImportInventoryModal()"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>📥 Ansible Inventory importieren</h2>
+        <button class="modal-close" onclick="closeImportInventoryModal()">✕</button>
+      </div>
+      <div class="import-inv-body">
+        <p class="import-inv-info">
+          Gib den <strong>absoluten Pfad</strong> zur Ansible Inventory-Datei auf dem Server an.<br>
+          Unterstützte Formate: <code>.yml</code> / <code>.yaml</code> und INI (<code>/etc/ansible/hosts</code> etc.)<br>
+          IP, SSH-User und SSH-Passwort werden automatisch aus den Host-Variablen übernommen.
+          Das Switch-Modell ist nach dem Import standardmäßig <em>2530-24G</em> und kann per <strong>✏️ Edit</strong> angepasst werden.
+        </p>
+        <div class="form-group">
+          <label for="import-inv-path">Pfad zur Inventory-Datei</label>
+          <input type="text" id="import-inv-path" placeholder="z.B. /etc/ansible/hosts oder /opt/inventory/hosts.yml">
+        </div>
+        <div id="import-inv-result" class="import-inv-result hidden"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" type="button" onclick="closeImportInventoryModal()">Abbrechen</button>
+          <button class="btn btn-primary" type="button" id="import-inv-btn" onclick="submitImportInventory()">📥 Importieren</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Add/Edit Switch Modal -->
   <div id="switch-modal" class="modal hidden">
     <div class="modal-backdrop" onclick="closeSwitchModal()"></div>
@@ -120,6 +178,10 @@
         <div class="form-group">
           <label for="form-name">Switch Name</label>
           <input type="text" id="form-name" placeholder="e.g. SW-Lobby-01" required>
+        </div>
+        <div class="form-group">
+          <label for="form-hostname">Hardware Hostname <span class="label-hint">(optional, z.B. Eingang-Sued-EventX)</span></label>
+          <input type="text" id="form-hostname" placeholder="z.B. sw231-h1-einlass">
         </div>
         <div class="form-group">
           <label for="form-ip">IP Address</label>
@@ -147,6 +209,10 @@
               <option value="2930F-48G-PoE+">2930F-48G-PoE+ (48 Ports)</option>
             </optgroup>
           </select>
+        </div>
+        <div class="form-group">
+          <label for="form-dhcp-vlan">DHCP Client VLAN <span class="label-hint">(optional, z.B. 1 oder 10 für ip address dhcp-bootp)</span></label>
+          <input type="number" id="form-dhcp-vlan" min="1" max="299" placeholder="z.B. 1 (Leer = unberührt)">
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -214,16 +280,22 @@
               </optgroup>
             </select>
           </div>
+          <div class="form-group">
+            <label for="gen-dhcp-vlan">DHCP Client VLAN <span class="label-hint">(optional, z.B. 1 oder 10)</span></label>
+            <input type="number" id="gen-dhcp-vlan" min="1" max="299" placeholder="z.B. 1 (Leer = unberührt)">
+          </div>
         </div>
 
         <div class="gen-grid-wrapper">
           <table class="port-grid">
             <thead>
               <tr>
+                <th class="col-check"><input type="checkbox" id="check-all-gen" title="Alle auswählen" onchange="toggleAllGenPorts(this)"></th>
                 <th class="col-port">Port</th>
                 <th class="col-name">Description</th>
                 <th class="col-untagged">Untagged VLAN</th>
                 <th class="col-tagged">Tagged VLANs</th>
+                <th class="col-trust" title="interface X dhcp-snooping trust">DHCP Trust 🛡️</th>
                 <th class="col-uplink"></th>
               </tr>
             </thead>
@@ -304,6 +376,66 @@
           </button>
           <button type="button" class="btn btn-warning" id="btn-deploy-keys" onclick="deploySSHKeys()">
             🚀 Deploy auf alle Switches
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- VLAN Names Modal -->
+  <div id="vlan-names-modal" class="modal hidden">
+    <div class="modal-backdrop" onclick="closeVlanNamesModal()"></div>
+    <div class="modal-content modal-wide">
+      <div class="modal-header">
+        <h2>🏷️ VLAN-Namen & Verwaltung</h2>
+        <button class="modal-close" onclick="closeVlanNamesModal()">✕</button>
+      </div>
+
+      <p class="modal-description">
+        Hier kannst du eigene Bezeichnungen für deine VLANs festlegen (z. B. <code>22</code> → <code>22_Media</code> oder <code>15</code> → <code>15_Crew</code>).
+        Diese Namen werden direkt im Dashboard angezeigt und bei <strong>Deploy / Bootstrap</strong> automatisch auf alle Switches gepushed.
+      </p>
+
+      <!-- Existing VLAN Names Table -->
+      <div class="table-responsive" style="max-height: 280px; overflow-y: auto; margin-bottom: 1.5rem; border: 1px solid var(--border-color); border-radius: 8px;">
+        <table class="port-grid" id="vlan-names-table">
+          <thead>
+            <tr>
+              <th style="width: 100px;">VLAN ID</th>
+              <th>VLAN Name / Beschreibung</th>
+              <th style="width: 170px; text-align: center;" title="ip address dhcp-bootp für dieses VLAN ausführen">DHCP-BootP 🌐</th>
+              <th style="width: 80px; text-align: center;">Aktion</th>
+            </tr>
+          </thead>
+          <tbody id="vlan-names-body">
+            <!-- Dynamically populated -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Add VLAN Name Form -->
+      <div class="ssh-key-add-form">
+        <h3>VLAN benennen / aktualisieren</h3>
+        <div class="form-row">
+          <div class="form-group" style="max-width: 180px;">
+            <label for="vlan-id-input">VLAN ID (1-299)</label>
+            <input type="number" id="vlan-id-input" min="1" max="299" placeholder="z.B. 22" onkeydown="if(event.key==='Enter'){document.getElementById('vlan-name-input').focus();}">
+          </div>
+          <div class="form-group" style="flex-grow: 1;">
+            <label for="vlan-name-input">VLAN Name</label>
+            <input type="text" id="vlan-name-input" placeholder="z.B. 22_Media oder 15_Crew" onkeydown="if(event.key==='Enter'){addOrUpdateVlanName();}">
+          </div>
+          <div class="form-group" style="max-width: 140px; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+            <label for="vlan-dhcp-input" style="cursor: pointer; text-align: center;" title="ip address dhcp-bootp">DHCP-BootP</label>
+            <input type="checkbox" id="vlan-dhcp-input" style="width: 20px; height: 20px; cursor: pointer; accent-color: var(--accent-primary);">
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-primary" onclick="addOrUpdateVlanName()">
+            ➕ Name speichern
+          </button>
+          <button type="button" class="btn btn-secondary" onclick="closeVlanNamesModal()">
+            Schließen
           </button>
         </div>
       </div>

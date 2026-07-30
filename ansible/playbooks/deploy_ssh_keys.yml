@@ -24,7 +24,7 @@
       ansible.builtin.set_fact:
         ssh_key_commands: >-
           {{ ['configure terminal'] +
-             lookup('template', '../templates/ssh_keys.j2').strip().split('\n')
+             lookup('template', '../templates/ssh_keys.j2').splitlines()
              | map('trim') | reject('equalto', '') | list +
              ['exit'] }}
 

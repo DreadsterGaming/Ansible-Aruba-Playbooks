@@ -42,6 +42,39 @@
   --transition-slow: 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+body.light-theme, [data-theme="light"] {
+  --bg-primary: #f1f5f9;
+  --bg-secondary: #ffffff;
+  --bg-surface: rgba(15, 23, 42, 0.04);
+  --bg-surface-hover: rgba(15, 23, 42, 0.08);
+  --bg-surface-active: rgba(15, 23, 42, 0.12);
+
+  --accent-primary: #4f46e5;
+  --accent-secondary: #7c3aed;
+  --accent-gradient: linear-gradient(135deg, #4f46e5, #7c3aed);
+  --accent-glow: 0 0 20px rgba(79, 70, 229, 0.2);
+
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+
+  --border-subtle: rgba(15, 23, 42, 0.08);
+  --border-medium: rgba(15, 23, 42, 0.18);
+  --border-focus: rgba(79, 70, 229, 0.6);
+}
+
+body.light-theme .port-grid th {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+body.light-theme input, 
+body.light-theme select, 
+body.light-theme textarea {
+  background-color: var(--bg-secondary);
+  border-color: var(--border-medium);
+  color: var(--text-primary);
+}
+
 /* --- Reset & Base --- */
 *, *::before, *::after {
   box-sizing: border-box;
@@ -319,6 +352,72 @@ main {
   font-size: 1.1em;
   font-weight: 600;
 }
+.tab-import {
+  border-style: solid;
+  color: var(--accent-secondary, #10b981);
+  border-color: var(--accent-secondary, #10b981);
+}
+.tab-import:hover {
+  color: var(--accent-secondary, #10b981);
+  border-color: var(--accent-secondary, #10b981);
+  background: rgba(16, 185, 129, 0.08);
+}
+
+/* Import Inventory Modal */
+.import-inv-body {
+  padding: 20px;
+}
+.import-inv-info {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin-bottom: 20px;
+  padding: 12px 14px;
+  background: rgba(99, 102, 241, 0.06);
+  border-left: 3px solid var(--accent-primary);
+  border-radius: 4px;
+}
+.import-inv-info code {
+  background: var(--bg-elevated);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 0.83em;
+}
+.import-inv-result {
+  margin-top: 16px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.import-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.import-stat {
+  padding: 8px 12px;
+  font-size: 0.875rem;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+.import-stat.import-ok  { color: #10b981; background: rgba(16,185,129,0.08); }
+.import-stat.import-skip { color: var(--text-muted); }
+.import-stat.import-fail { color: #ef4444; background: rgba(239,68,68,0.08); }
+.import-error {
+  padding: 10px 14px;
+  color: #ef4444;
+  background: rgba(239,68,68,0.08);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+}
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
 
 /* ============================================
    Switch Info Bar
@@ -455,11 +554,36 @@ main {
 }
 
 /* Column widths */
+.col-check { width: 36px; text-align: center; }
 .col-port { width: 65px; }
 .col-name { width: 250px; }
 .col-untagged { width: 150px; }
 .col-tagged { min-width: 200px; }
+.col-trust { width: 110px; text-align: center; }
 .col-uplink { width: 85px; }
+
+/* Port checkbox & trust checkbox */
+.port-check, .port-trust {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--accent-primary);
+}
+
+/* Disabled (unchecked) port rows */
+.port-disabled {
+  opacity: 0.35;
+}
+
+.port-disabled td:first-child {
+  opacity: 1;
+}
+
+.port-disabled input:not(.port-check),
+.port-disabled select,
+.port-disabled .btn-uplink {
+  pointer-events: none;
+}
 
 /* Port number styling */
 .port-number {
@@ -515,7 +639,7 @@ main {
 }
 
 .port-grid select option {
-  background: #1a1b24;
+  background: var(--bg-secondary);
   color: var(--text-primary);
   padding: 4px 8px;
 }
@@ -937,7 +1061,7 @@ main {
 }
 
 .form-group select option {
-  background: #1a1b24;
+  background: var(--bg-secondary);
   color: var(--text-primary);
 }
 
@@ -1176,4 +1300,62 @@ main {
   white-space: pre;
   margin-bottom: 16px;
   tab-size: 2;
+}
+
+/* ============================================
+   DHCP Client VLAN Card (Management DHCP)
+   ============================================ */
+.dhcp-vlan-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--bg-secondary);
+  padding: 0.85rem 1.25rem;
+  border-radius: var(--radius-md);
+  margin-bottom: 1.25rem;
+  border: 1px solid var(--border-medium);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  transition: var(--transition-fast);
+}
+.dhcp-vlan-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.dhcp-icon {
+  font-size: 1.6rem;
+}
+.dhcp-vlan-info strong {
+  display: block;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+.dhcp-vlan-info span {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+.dhcp-vlan-info code {
+  background: var(--bg-surface-hover);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  color: var(--accent-primary);
+  font-size: 0.8rem;
+}
+.dhcp-vlan-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.dhcp-vlan-input-wrapper label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.dhcp-vlan-input-wrapper input {
+  width: 130px;
+  padding: 6px 10px;
+  text-align: center;
+  font-family: var(--font-mono);
+  border-radius: var(--radius-sm);
 }

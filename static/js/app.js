@@ -7,21 +7,49 @@ let switches = [];
 let activeSwitch = null;
 let hasUnsavedChanges = false;
 let deployLogExpanded = true;
+let customVlanNames = {};
 
 // Pre-build a template <select> for VLAN 1-299 (cloned per port row for performance)
 const vlanSelectTemplate = document.createElement('select');
 vlanSelectTemplate.className = 'port-untagged';
-for (let i = 1; i <= 299; i++) {
-  const opt = document.createElement('option');
-  opt.value = i;
-  opt.textContent = i;
-  vlanSelectTemplate.appendChild(opt);
+
+function buildVlanSelectTemplate() {
+  vlanSelectTemplate.innerHTML = '';
+  for (let i = 1; i <= 299; i++) {
+    const opt = document.createElement('option');
+    opt.value = i;
+    const val = customVlanNames[i] || customVlanNames[String(i)];
+    const cName = (val && typeof val === 'object') ? val.name : val;
+    opt.textContent = cName ? `${i} (${cName})` : `${i}`;
+    vlanSelectTemplate.appendChild(opt);
+  }
+}
+buildVlanSelectTemplate();
+
+// --- Theme Toggle ---
+function initTheme() {
+  const saved = localStorage.getItem('aruba_theme') || 'dark';
+  if (saved === 'light') {
+    document.body.classList.add('light-theme');
+    const icon = document.getElementById('theme-icon');
+    if (icon) icon.innerHTML = '🌙 Dark Mode';
+  }
+}
+
+function toggleTheme() {
+  const isLight = document.body.classList.toggle('light-theme');
+  localStorage.setItem('aruba_theme', isLight ? 'light' : 'dark');
+  const icon = document.getElementById('theme-icon');
+  if (icon) icon.innerHTML = isLight ? '🌙 Dark Mode' : '🌞 Light Mode';
+  showToast(isLight ? 'Light Mode aktiviert' : 'Dark Mode aktiviert', 'info');
 }
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', init);
 
 async function init() {
+  initTheme();
+  await fetchVlanNames(false);
   await fetchSwitches();
   renderTabs();
   if (switches.length > 0) {
@@ -109,6 +137,10 @@ function renderSwitchInfo() {
   document.getElementById('chip-ip').textContent = 'IP: ' + sw.ip;
   document.getElementById('chip-model').textContent = 'Model: ' + sw.model;
   document.getElementById('chip-ports').textContent = 'Ports: ' + sw.port_count;
+  const hostElem = document.getElementById('chip-hostname');
+  if (hostElem) hostElem.textContent = '🏷️ Hostname: ' + (sw.hostname || sw.name);
+  const dhcpInput = document.getElementById('active-dhcp-vlan');
+  if (dhcpInput) dhcpInput.value = sw.dhcp_vlan || '';
 }
 
 // --- VLAN Range Helpers ---
@@ -154,6 +186,7 @@ function compressVlanRange(vlans) {
 function setUplink(row) {
   const taggedInput = row.querySelector('.port-tagged');
   const btn = row.querySelector('.btn-uplink');
+  const cb = row.querySelector('.port-check');
   if (taggedInput.value.trim() === '2-299') {
     // Toggle off
     taggedInput.value = '';
@@ -161,8 +194,43 @@ function setUplink(row) {
   } else {
     taggedInput.value = '2-299';
     btn.classList.add('active');
+    // Auto-check the port when setting uplink
+    if (cb && !cb.checked) {
+      cb.checked = true;
+      togglePortRow(row, true);
+    }
   }
   markUnsaved();
+}
+
+function togglePortRow(row, enabled) {
+  row.classList.toggle('port-disabled', !enabled);
+  for (const input of row.querySelectorAll('input:not(.port-check), select')) {
+    input.disabled = !enabled;
+  }
+  const uplinkBtn = row.querySelector('.btn-uplink');
+  if (uplinkBtn) uplinkBtn.disabled = !enabled;
+}
+
+function toggleAllPorts(masterCb) {
+  for (const row of document.querySelectorAll('#port-grid-body tr')) {
+    const cb = row.querySelector('.port-check');
+    if (cb) {
+      cb.checked = masterCb.checked;
+      togglePortRow(row, masterCb.checked);
+    }
+  }
+  markUnsaved();
+}
+
+function toggleAllGenPorts(masterCb) {
+  for (const row of document.querySelectorAll('#gen-grid-body tr')) {
+    const cb = row.querySelector('.port-check');
+    if (cb) {
+      cb.checked = masterCb.checked;
+      togglePortRow(row, masterCb.checked);
+    }
+  }
 }
 
 // --- Port Grid ---
@@ -175,6 +243,22 @@ function renderPortGrid() {
   sw.ports.forEach(p => {
     const tr = document.createElement('tr');
     tr.dataset.port = p.port;
+
+    // Detect if port has non-default config
+    const isActive = (p.untagged_vlan && p.untagged_vlan !== 1)
+      || (p.tagged_vlans && p.tagged_vlans.length > 0)
+      || (p.name && p.name.trim() !== '')
+      || Boolean(p.dhcp_snooping_trust);
+
+    // Checkbox
+    const tdCheck = document.createElement('td');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'port-check';
+    cb.checked = isActive;
+    cb.onchange = function() { togglePortRow(tr, cb.checked); markUnsaved(); };
+    tdCheck.appendChild(cb);
+    tr.appendChild(tdCheck);
 
     // Port number
     const tdPort = document.createElement('td');
@@ -208,6 +292,18 @@ function renderPortGrid() {
     tdTagged.appendChild(taggedInput);
     tr.appendChild(tdTagged);
 
+    // DHCP Snooping Trust
+    const tdTrust = document.createElement('td');
+    tdTrust.style.textAlign = 'center';
+    const trustCb = document.createElement('input');
+    trustCb.type = 'checkbox';
+    trustCb.className = 'port-trust';
+    trustCb.title = 'interface ' + p.port + ' dhcp-snooping trust';
+    trustCb.checked = Boolean(p.dhcp_snooping_trust);
+    trustCb.onchange = onGridChange;
+    tdTrust.appendChild(trustCb);
+    tr.appendChild(tdTrust);
+
     // Uplink button
     const tdUplink = document.createElement('td');
     const uplinkBtn = document.createElement('button');
@@ -220,6 +316,9 @@ function renderPortGrid() {
     if (tagged.length >= 290) uplinkBtn.classList.add('active');
     tdUplink.appendChild(uplinkBtn);
     tr.appendChild(tdUplink);
+
+    // Disable row if not active
+    if (!isActive) togglePortRow(tr, false);
 
     tbody.appendChild(tr);
   });
@@ -250,36 +349,55 @@ function hideSaveBar() {
 }
 
 // --- Save Ports ---
-async function savePorts() {
+async function savePorts(silent = false) {
   const sw = getSwitch(activeSwitch);
   if (!sw) return;
 
   const ports = [];
   for (const row of document.querySelectorAll('#port-grid-body tr')) {
     const port = parseInt(row.dataset.port);
+    const cb = row.querySelector('.port-check');
     const name = row.querySelector('.port-name').value.trim();
     const untaggedVlan = parseInt(row.querySelector('.port-untagged').value);
     const taggedStr = row.querySelector('.port-tagged').value.trim();
     const taggedVlans = parseTaggedVlans(taggedStr);
-    ports.push({ port, name, untagged_vlan: untaggedVlan, tagged_vlans: taggedVlans });
+    const dhcpTrust = row.querySelector('.port-trust') ? row.querySelector('.port-trust').checked : false;
+
+    // Unchecked and default values = default port, won't generate CLI commands
+    if (cb && !cb.checked && !name && untaggedVlan === 1 && taggedVlans.length === 0 && !dhcpTrust) {
+      ports.push({ port, name: '', untagged_vlan: 1, tagged_vlans: [], dhcp_snooping_trust: false });
+      continue;
+    }
+
+    // Auto-check if custom settings exist
+    if (cb && !cb.checked && (name || untaggedVlan !== 1 || taggedVlans.length > 0 || dhcpTrust)) {
+      cb.checked = true;
+      togglePortRow(row, true);
+    }
+
+    ports.push({ port, name, untagged_vlan: untaggedVlan, tagged_vlans: taggedVlans, dhcp_snooping_trust: dhcpTrust });
   }
 
   const btn = document.getElementById('btn-save');
-  const origText = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = '⏳ Saving…';
+  const origText = btn ? btn.textContent : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Saving…';
+  }
 
   try {
     await apiCall('/api/switches/' + activeSwitch + '/ports', 'PUT', ports);
     sw.ports = ports;
     hasUnsavedChanges = false;
     hideSaveBar();
-    showToast('Port configuration saved!', 'success');
+    if (!silent) showToast('Port configuration saved!', 'success');
   } catch (err) {
     showToast('Failed to save: ' + err.message, 'error');
   } finally {
-    btn.disabled = false;
-    btn.textContent = origText;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = origText;
+    }
   }
 }
 
@@ -291,6 +409,8 @@ function openAddSwitchModal() {
   document.getElementById('switch-form').reset();
   // Reset model to default
   document.getElementById('form-model').value = '2530-24G';
+  document.getElementById('form-hostname').value = '';
+  document.getElementById('form-dhcp-vlan').value = '';
   // Hide SSH key status (no existing key for new switches)
   document.getElementById('ssh-key-status').classList.add('hidden');
   document.getElementById('form-ssh-key').value = '';
@@ -304,8 +424,10 @@ function editCurrentSwitch() {
   document.getElementById('form-submit-btn').textContent = 'Save Changes';
   document.getElementById('form-switch-id').value = sw.id;
   document.getElementById('form-name').value = sw.name;
+  document.getElementById('form-hostname').value = sw.hostname || '';
   document.getElementById('form-ip').value = sw.ip;
   document.getElementById('form-model').value = sw.model;
+  document.getElementById('form-dhcp-vlan').value = sw.dhcp_vlan || '';
   document.getElementById('form-user').value = sw.ssh_user;
   document.getElementById('form-password').value = sw.ssh_password || '';
   // Show SSH key status if a key is stored, but don't expose content
@@ -331,8 +453,10 @@ async function submitSwitchForm(event) {
 
   const payload = {
     name: document.getElementById('form-name').value.trim(),
+    hostname: document.getElementById('form-hostname').value.trim(),
     ip: document.getElementById('form-ip').value.trim(),
     model: document.getElementById('form-model').value,
+    dhcp_vlan: document.getElementById('form-dhcp-vlan').value.trim(),
     ssh_user: document.getElementById('form-user').value.trim(),
     ssh_password: document.getElementById('form-password').value,
     ssh_key_content: document.getElementById('form-ssh-key').value.trim(),
@@ -424,14 +548,16 @@ async function deployAll() {
   btn.innerHTML = '<span class="btn-icon">⏳</span> Deploying…';
 
   try {
-    const res = await apiCall('/api/deploy', 'POST');
-    showDeployLog(res.output || 'No output');
+    const response = await fetch('/api/deploy', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    const res = await response.json();
+    showDeployLog(res.output || res.error || 'No output');
     if (res.status === 'success') {
       showToast('Deployment successful!', 'success');
     } else {
       showToast('Deployment finished with errors', 'error');
     }
   } catch (err) {
+    showDeployLog('Connection error: ' + err.message);
     showToast('Deploy failed: ' + err.message, 'error');
   } finally {
     btn.disabled = false;
@@ -444,15 +570,20 @@ async function deployCurrentSwitch() {
   if (!sw) return;
   if (!confirm('Deploy port configuration to "' + sw.name + '"?')) return;
 
+  showToast('⏳ Speichere Konfiguration und starte Deploy...', 'info');
+  await savePorts(true);
+
   try {
-    const res = await apiCall('/api/deploy/' + activeSwitch, 'POST');
-    showDeployLog(res.output || 'No output');
+    const response = await fetch('/api/deploy/' + activeSwitch, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    const res = await response.json();
+    showDeployLog(res.output || res.error || 'No output');
     if (res.status === 'success') {
       showToast('Deployed to ' + sw.name + '!', 'success');
     } else {
       showToast('Deploy finished with errors', 'error');
     }
   } catch (err) {
+    showDeployLog('Connection error: ' + err.message);
     showToast('Deploy failed: ' + err.message, 'error');
   }
 }
@@ -464,14 +595,16 @@ async function bootstrapCurrentSwitch() {
 
   try {
     showToast('Bootstrapping VLANs on ' + sw.name + '…', 'info');
-    const res = await apiCall('/api/bootstrap/' + activeSwitch, 'POST');
-    showDeployLog(res.output || 'No output');
+    const response = await fetch('/api/bootstrap/' + activeSwitch, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    const res = await response.json();
+    showDeployLog(res.output || res.error || 'No output');
     if (res.status === 'success') {
       showToast('VLANs bootstrapped on ' + sw.name + '!', 'success');
     } else {
       showToast('Bootstrap finished with errors', 'error');
     }
   } catch (err) {
+    showDeployLog('Connection error: ' + err.message);
     showToast('Bootstrap failed: ' + err.message, 'error');
   }
 }
@@ -567,6 +700,16 @@ function genBuildGrid() {
     const tr = document.createElement('tr');
     tr.dataset.port = i;
 
+    // Checkbox (unchecked by default for generator)
+    const tdCheck = document.createElement('td');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'port-check';
+    cb.checked = false;
+    cb.onchange = function() { togglePortRow(tr, cb.checked); };
+    tdCheck.appendChild(cb);
+    tr.appendChild(tdCheck);
+
     // Port number
     const tdPort = document.createElement('td');
     tdPort.innerHTML = '<span class="port-number">' + i + '</span>';
@@ -597,6 +740,16 @@ function genBuildGrid() {
     tdTagged.appendChild(taggedInput);
     tr.appendChild(tdTagged);
 
+    // DHCP Snooping Trust
+    const tdTrust = document.createElement('td');
+    tdTrust.style.textAlign = 'center';
+    const trustCb = document.createElement('input');
+    trustCb.type = 'checkbox';
+    trustCb.className = 'port-trust';
+    trustCb.title = 'interface ' + i + ' dhcp-snooping trust';
+    tdTrust.appendChild(trustCb);
+    tr.appendChild(tdTrust);
+
     // Uplink button
     const tdUplink = document.createElement('td');
     const uplinkBtn = document.createElement('button');
@@ -607,6 +760,9 @@ function genBuildGrid() {
     tdUplink.appendChild(uplinkBtn);
     tr.appendChild(tdUplink);
 
+    // Start disabled
+    togglePortRow(tr, false);
+
     tbody.appendChild(tr);
   }
 }
@@ -615,11 +771,17 @@ function genCollectPorts() {
   const ports = [];
   for (const row of document.querySelectorAll('#gen-grid-body tr')) {
     const port = parseInt(row.dataset.port);
+    const cb = row.querySelector('.port-check');
+    if (cb && !cb.checked) {
+      ports.push({ port, name: '', untagged_vlan: 1, tagged_vlans: [], dhcp_snooping_trust: false });
+      continue;
+    }
     const name = row.querySelector('.port-name').value.trim();
     const untaggedVlan = parseInt(row.querySelector('.port-untagged').value);
     const taggedStr = row.querySelector('.port-tagged').value.trim();
     const taggedVlans = parseTaggedVlans(taggedStr);
-    ports.push({ port, name, untagged_vlan: untaggedVlan, tagged_vlans: taggedVlans });
+    const dhcpTrust = row.querySelector('.port-trust') ? row.querySelector('.port-trust').checked : false;
+    ports.push({ port, name, untagged_vlan: untaggedVlan, tagged_vlans: taggedVlans, dhcp_snooping_trust: dhcpTrust });
   }
   return ports;
 }
@@ -627,6 +789,7 @@ function genCollectPorts() {
 async function createPlaybook() {
   const name = document.getElementById('gen-name').value.trim();
   const model = document.getElementById('gen-model').value;
+  const dhcp_vlan = document.getElementById('gen-dhcp-vlan').value.trim();
   const ports = genCollectPorts();
 
   if (!name) {
@@ -640,7 +803,7 @@ async function createPlaybook() {
   btn.textContent = '⏳ Generiere…';
 
   try {
-    const res = await apiCall('/api/playbook/generate', 'POST', { name, model, ports });
+    const res = await apiCall('/api/playbook/generate', 'POST', { name, model, dhcp_vlan, ports });
     genLastResult = res;
 
     // Show output
@@ -791,3 +954,333 @@ async function deploySSHKeys() {
     btn.textContent = origText;
   }
 }
+
+/* ============================================
+   VLAN Names Management
+   ============================================ */
+async function fetchVlanNames(reRender = true) {
+  try {
+    const res = await apiCall('/api/vlans', 'GET');
+    customVlanNames = res || {};
+    buildVlanSelectTemplate();
+    if (reRender && activeSwitch && !hasUnsavedChanges) {
+      renderPortGrid();
+    }
+  } catch (err) {
+    console.error('Failed to fetch VLAN names:', err);
+  }
+}
+
+function openVlanNamesModal() {
+  renderVlanNamesTable();
+  document.getElementById('vlan-names-modal').classList.remove('hidden');
+  document.getElementById('vlan-id-input').focus();
+}
+
+function closeVlanNamesModal() {
+  document.getElementById('vlan-names-modal').classList.add('hidden');
+}
+
+function renderVlanNamesTable() {
+  const tbody = document.getElementById('vlan-names-body');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  const ids = Object.keys(customVlanNames).map(id => parseInt(id)).filter(id => !isNaN(id)).sort((a, b) => a - b);
+  if (ids.length === 0) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="4" style="text-align:center; padding: 1.5rem; color: var(--text-muted);">Noch keine VLAN-Namen festgelegt. Füge unten deinen ersten eigenen Namen hinzu.</td>';
+    tbody.appendChild(tr);
+    return;
+  }
+
+  ids.forEach(id => {
+    const val = customVlanNames[String(id)] || customVlanNames[id];
+    const name = (val && typeof val === 'object') ? (val.name || '') : (val ? String(val) : '');
+    const dhcpBootp = (val && typeof val === 'object') ? Boolean(val.dhcp_bootp) : false;
+    const tr = document.createElement('tr');
+
+    const tdId = document.createElement('td');
+    tdId.innerHTML = `<strong style="color: var(--primary-color);">VLAN ${id}</strong>`;
+    tr.appendChild(tdId);
+
+    const tdName = document.createElement('td');
+    tdName.textContent = name;
+    tdName.style.fontWeight = '500';
+    tr.appendChild(tdName);
+
+    const tdDhcp = document.createElement('td');
+    tdDhcp.style.textAlign = 'center';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.style = 'width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent-primary);';
+    cb.checked = dhcpBootp;
+    cb.title = 'ip address dhcp-bootp für VLAN ' + id + ' ein-/ausschalten';
+    cb.onchange = (e) => toggleVlanDhcp(id, e.target.checked);
+    tdDhcp.appendChild(cb);
+    tr.appendChild(tdDhcp);
+
+    const tdAction = document.createElement('td');
+    tdAction.style.textAlign = 'center';
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-xs btn-danger';
+    delBtn.innerHTML = '🗑️';
+    delBtn.title = 'VLAN-Name löschen';
+    delBtn.onclick = () => deleteVlanName(id);
+    tdAction.appendChild(delBtn);
+    tr.appendChild(tdAction);
+
+    tbody.appendChild(tr);
+  });
+}
+
+async function toggleVlanDhcp(vid, isChecked) {
+  const currentVal = customVlanNames[String(vid)] || customVlanNames[vid];
+  const currentName = (currentVal && typeof currentVal === 'object') ? (currentVal.name || '') : (currentVal ? String(currentVal) : '');
+  const updatedVlans = { ...customVlanNames, [String(vid)]: { name: currentName, dhcp_bootp: isChecked } };
+
+  try {
+    const res = await apiCall('/api/vlans', 'PUT', updatedVlans);
+    customVlanNames = res.vlans || updatedVlans;
+    buildVlanSelectTemplate();
+    if (activeSwitch && !hasUnsavedChanges) {
+      renderPortGrid();
+    }
+    showToast(`VLAN ${vid}: DHCP-BootP ${isChecked ? 'aktiviert' : 'deaktiviert'}!`, 'success');
+  } catch (err) {
+    showToast('Fehler beim Speichern der DHCP-BootP Einstellung: ' + err.message, 'error');
+    renderVlanNamesTable();
+  }
+}
+
+async function addOrUpdateVlanName() {
+  const idInput = document.getElementById('vlan-id-input');
+  const nameInput = document.getElementById('vlan-name-input');
+  const dhcpInput = document.getElementById('vlan-dhcp-input');
+  const vid = parseInt(idInput.value);
+  const name = nameInput.value.trim();
+  const dhcpBootp = dhcpInput ? dhcpInput.checked : false;
+
+  if (isNaN(vid) || vid < 1 || vid > 299) {
+    showToast('Bitte eine gültige VLAN-ID zwischen 1 und 299 eingeben.', 'error');
+    idInput.focus();
+    return;
+  }
+  if (!name) {
+    showToast('Bitte einen Namen für das VLAN eingeben.', 'error');
+    nameInput.focus();
+    return;
+  }
+
+  const updatedVlans = { ...customVlanNames, [String(vid)]: { name: name, dhcp_bootp: dhcpBootp } };
+
+  try {
+    const res = await apiCall('/api/vlans', 'PUT', updatedVlans);
+    customVlanNames = res.vlans || updatedVlans;
+    buildVlanSelectTemplate();
+    renderVlanNamesTable();
+    if (activeSwitch && !hasUnsavedChanges) {
+      renderPortGrid();
+    }
+    showToast(`VLAN ${vid} als "${name}" gespeichert!`, 'success');
+    idInput.value = '';
+    nameInput.value = '';
+    if (dhcpInput) dhcpInput.checked = false;
+    idInput.focus();
+  } catch (err) {
+    showToast('Fehler beim Speichern des VLAN-Namens: ' + err.message, 'error');
+  }
+}
+
+async function deleteVlanName(vid) {
+  const updatedVlans = { ...customVlanNames };
+  delete updatedVlans[String(vid)];
+  delete updatedVlans[vid];
+
+  try {
+    const res = await apiCall('/api/vlans', 'PUT', updatedVlans);
+    customVlanNames = res.vlans || updatedVlans;
+    buildVlanSelectTemplate();
+    renderVlanNamesTable();
+    if (activeSwitch && !hasUnsavedChanges) {
+      renderPortGrid();
+    }
+    showToast(`VLAN ${vid}-Name gelöscht.`, 'success');
+  } catch (err) {
+    showToast('Fehler beim Löschen des VLAN-Namens: ' + err.message, 'error');
+  }
+}
+
+// --- DHCP Client Management VLAN ---
+async function onDhcpVlanChange(val) {
+  const sw = getSwitch(activeSwitch);
+  if (!sw) return;
+  try {
+    const res = await apiCall('/api/switches/' + activeSwitch, 'PUT', { dhcp_vlan: val });
+    sw.dhcp_vlan = res.dhcp_vlan;
+    showToast(sw.dhcp_vlan ? (`DHCP Client (ip address dhcp-bootp) für VLAN ${sw.dhcp_vlan} konfiguriert`) : 'DHCP Client VLAN entfernt', 'success');
+  } catch (err) {
+    showToast('Fehler beim Speichern von DHCP Client VLAN: ' + err.message, 'error');
+  }
+}
+
+// --- Remove VLANs from Switch ---
+async function removeVlansFromSwitch() {
+  const sw = getSwitch(activeSwitch);
+  if (!sw) return;
+  const target = prompt(
+    `Welche VLANs möchtest du vom Switch "${sw.name}" löschen?\n\nGib z. B. "2-299" für alle benutzerdefinierten VLANs ein oder einzelne IDs/Bereiche wie "15,22,30-44":`,
+    "2-299"
+  );
+  if (target === null || !target.trim()) return;
+
+  if (!confirm(`⚠️ ACHTUNG: Möchtest du wirklich VLAN(s) "${target}" vom Switch "${sw.name}" in Hardware entfernen?`)) return;
+
+  showToast(`⏳ Lösche VLANs (${target}) auf Switch ${sw.name}...`, 'info');
+  
+  try {
+    const res = await apiCall('/api/switches/' + activeSwitch + '/remove_vlans', 'POST', { target_vlans: target.trim() });
+    showDeployLog(res);
+    showToast(`VLANs (${target}) erfolgreich vom Switch entfernt!`, 'success');
+  } catch (err) {
+    showToast('Fehler beim Löschen der VLANs: ' + err.message, 'error');
+  }
+}
+
+// --- Hostname & Config Backup ---
+async function renameCurrentSwitchHostname() {
+  const sw = getSwitch(activeSwitch);
+  if (!sw) return;
+  const currentHost = sw.hostname || sw.name || '';
+  const newHost = prompt('Neuer Hostname für den Switch (wird direkt via CLI am Switch gesetzt):', currentHost);
+  if (newHost === null) return;
+  const trimmed = newHost.trim();
+
+  showToast('⏳ Setze Switch-Hostnamen auf "' + trimmed + '"...', 'info');
+  try {
+    const response = await fetch('/api/switches/' + activeSwitch + '/hostname', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hostname: trimmed })
+    });
+    const res = await response.json();
+    if (response.ok && res.result && res.result.status === 'success') {
+      showToast('✅ Hostname erfolgreich am Switch geändert!', 'success');
+      showDeployLog(res.result.output || 'Hostname erfolgreich konfiguriert.');
+      await fetchSwitches();
+      renderSwitchInfo();
+    } else {
+      showToast('❌ Fehler beim Setzen des Hostnamens: ' + (res.error || (res.result ? res.result.output : 'Unbekannter Fehler')), 'error');
+      if (res.result && res.result.output) showDeployLog(res.result.output);
+    }
+  } catch (err) {
+    showToast('❌ Verbindungsfehler: ' + err.message, 'error');
+  }
+}
+
+async function backupCurrentSwitchConfig() {
+  const sw = getSwitch(activeSwitch);
+  if (!sw) return;
+  if (!confirm('Komplette Konfiguration (show running-config) von "' + sw.name + '" abfragen und jetzt auf dein Gerät herunterladen?')) return;
+
+  showToast('⏳ Ersetze / Frage running-config am Switch ab...', 'info');
+  try {
+    const response = await fetch('/api/switches/' + activeSwitch + '/backup', { method: 'POST' });
+    const res = await response.json();
+    if (response.ok && res.status === 'success' && res.config) {
+      showToast('✅ Config empfangen, Download wird ausgeführt!', 'success');
+      const blob = new Blob([res.config], { type: 'text/plain;charset=utf-8' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = res.filename || (sw.name + '_running_config.cfg');
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      showDeployLog('--- DOWNLOADED RUNNING-CONFIG (' + (res.filename || sw.name) + ') ---\n\n' + res.config);
+    } else {
+      showToast('❌ Fehler beim Herunterladen der Config: ' + (res.error || (res.output ? res.output : 'Problem am Server')), 'error');
+      if (res.output) showDeployLog(res.output);
+    }
+  } catch (err) {
+    showToast('❌ Verbindungsfehler: ' + err.message, 'error');
+  }
+}
+
+// --- Inventory Import ---
+function openImportInventoryModal() {
+  document.getElementById('import-inv-path').value = '';
+  const res = document.getElementById('import-inv-result');
+  res.classList.add('hidden');
+  res.innerHTML = '';
+  document.getElementById('import-inv-btn').disabled = false;
+  document.getElementById('import-inventory-modal').classList.remove('hidden');
+}
+
+function closeImportInventoryModal() {
+  document.getElementById('import-inventory-modal').classList.add('hidden');
+}
+
+async function submitImportInventory() {
+  const path = document.getElementById('import-inv-path').value.trim();
+  if (!path) {
+    showToast('Bitte einen Dateipfad eingeben.', 'error');
+    return;
+  }
+  const btn = document.getElementById('import-inv-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Importiere…';
+
+  const resBox = document.getElementById('import-inv-result');
+  resBox.classList.add('hidden');
+  resBox.innerHTML = '';
+
+  try {
+    const response = await fetch('/api/switches/import_inventory', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path })
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      resBox.innerHTML = '<div class="import-error">❌ ' + (data.error || 'Unbekannter Fehler') + '</div>';
+      resBox.classList.remove('hidden');
+      showToast('Import fehlgeschlagen: ' + (data.error || 'Fehler'), 'error');
+      return;
+    }
+
+    let html = '<div class="import-summary">';
+    html += '<div class="import-stat">📊 <strong>' + data.total_found + '</strong> Hosts gefunden</div>';
+    html += '<div class="import-stat import-ok">✅ <strong>' + data.total_imported + '</strong> neu importiert</div>';
+    if (data.skipped && data.skipped.length) {
+      html += '<div class="import-stat import-skip">⏭️ <strong>' + data.skipped.length + '</strong> bereits vorhanden: ' + data.skipped.join(', ') + '</div>';
+    }
+    if (data.failed && data.failed.length) {
+      html += '<div class="import-stat import-fail">❌ <strong>' + data.failed.length + '</strong> fehlerhaft: ';
+      html += data.failed.map(f => f.name + ' (' + f.reason + ')').join(', ');
+      html += '</div>';
+    }
+    html += '</div>';
+    resBox.innerHTML = html;
+    resBox.classList.remove('hidden');
+
+    if (data.total_imported > 0) {
+      showToast('✅ ' + data.total_imported + ' Switch(es) aus Inventory importiert!', 'success');
+      await fetchSwitches();
+      renderTabs();
+      closeImportInventoryModal();
+    } else {
+      showToast('Keine neuen Switches importiert.', 'info');
+    }
+  } catch (err) {
+    resBox.innerHTML = '<div class="import-error">❌ Verbindungsfehler: ' + err.message + '</div>';
+    resBox.classList.remove('hidden');
+    showToast('❌ Verbindungsfehler: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📥 Importieren';
+  }
+}
+

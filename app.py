@@ -20,6 +20,7 @@ from jinja2 import Environment, FileSystemLoader
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DATA_FILE = os.path.join(DATA_DIR, "switches.json")
+VLANS_FILE = os.path.join(DATA_DIR, "vlans.json")
 SSH_PUBLIC_KEYS_FILE = os.path.join(DATA_DIR, "ssh_public_keys.json")
 ANSIBLE_DIR = os.path.join(BASE_DIR, "ansible")
 INVENTORY_DIR = os.path.join(ANSIBLE_DIR, "inventory")
@@ -110,6 +111,7 @@ def _generate_ports(model: str) -> list[dict]:
             "name": "",
             "untagged_vlan": 1,
             "tagged_vlans": [],
+            "dhcp_snooping_trust": False,
         }
         for i in range(1, count + 1)
     ]
@@ -179,10 +181,36 @@ def _generate_inventory_yaml(switches: list[dict]) -> str:
             lines.append(f"          ansible_password: {_yaml_quote(ssh_password)}")
         lines.append(f"          ansible_become: true")
         lines.append(f"          ansible_become_method: enable")
+        lines.append(f"          ansible_command_timeout: 120")
+        lines.append(f"          ansible_connect_timeout: 60")
     return "\n".join(lines) + "\n"
 
 
-def _generate_host_vars_yaml(switch: dict) -> str:
+def _compress_vlan_range(vlans: list) -> str:
+    """Compress a list of VLAN IDs into an Aruba CLI range string (e.g. '10,20-30')."""
+    if not vlans:
+        return ""
+    sorted_v = sorted(set(int(v) for v in vlans))
+    ranges = []
+    start = sorted_v[0]
+    end = start
+    for v in sorted_v[1:]:
+        if v == end + 1:
+            end = v
+        else:
+            if start == end:
+                ranges.append(str(start))
+            else:
+                ranges.append(f"{start}-{end}")
+            start = end = v
+    if start == end:
+        ranges.append(str(start))
+    else:
+        ranges.append(f"{start}-{end}")
+    return ",".join(ranges)
+
+
+def _generate_host_vars_yaml(switch: dict, vlan_names: dict = None) -> str:
     """Build the host_vars YAML for a single switch's port configuration."""
     lines = ["ports:"]
     for p in switch.get("ports", []):
@@ -193,8 +221,32 @@ def _generate_host_vars_yaml(switch: dict) -> str:
         if tagged:
             tag_items = ", ".join(str(v) for v in tagged)
             lines.append(f"    tagged_vlans: [{tag_items}]")
+            lines.append(f"    tagged_vlans_str: {_yaml_quote(_compress_vlan_range(tagged))}")
         else:
             lines.append(f"    tagged_vlans: []")
+            lines.append(f"    tagged_vlans_str: \"\"")
+        trust_val = "true" if p.get("dhcp_snooping_trust") else "false"
+        lines.append(f"    dhcp_snooping_trust: {trust_val}")
+    dhcp_vlan = switch.get("dhcp_vlan")
+    if dhcp_vlan:
+        lines.append(f"dhcp_vlan: {dhcp_vlan}")
+    hostname_val = switch.get("hostname", "")
+    if hostname_val:
+        lines.append(f"switch_hostname: {_yaml_quote(str(hostname_val))}")
+    if vlan_names:
+        lines.append("custom_vlan_names:")
+        for vid, val in sorted(vlan_names.items(), key=lambda x: int(x[0]) if x[0].isdigit() else str(x[0])):
+            if isinstance(val, dict):
+                lines.append(f"  {_yaml_quote(str(vid))}:")
+                lines.append(f"    name: {_yaml_quote(val.get('name', ''))}")
+                dhcp_str = "true" if val.get("dhcp_bootp") else "false"
+                lines.append(f"    dhcp_bootp: {dhcp_str}")
+            else:
+                lines.append(f"  {_yaml_quote(str(vid))}:")
+                lines.append(f"    name: {_yaml_quote(str(val))}")
+                lines.append(f"    dhcp_bootp: false")
+    else:
+        lines.append("custom_vlan_names: {}")
     return "\n".join(lines) + "\n"
 
 
@@ -205,6 +257,7 @@ def _do_generate() -> dict:
     """Generate all Ansible inventory and host_vars files. Returns a status dict."""
     with _file_lock:
         switches = _load_switches()
+        vlan_names = _load_vlans()
 
     _ensure_dirs()
 
@@ -223,7 +276,7 @@ def _do_generate() -> dict:
     for sw in switches:
         path = os.path.join(HOST_VARS_DIR, f"{sw['name']}.yml")
         with open(path, "w") as fh:
-            fh.write(_generate_host_vars_yaml(sw))
+            fh.write(_generate_host_vars_yaml(sw, vlan_names=vlan_names))
 
     return {
         "status": "ok",
@@ -231,7 +284,7 @@ def _do_generate() -> dict:
     }
 
 
-def _run_playbook(playbook: str, limit: str | None = None) -> dict:
+def _run_playbook(playbook: str, limit: str | None = None, extra_vars: dict | None = None) -> dict:
     """Execute an ansible-playbook command and return captured output."""
     global _last_deploy
 
@@ -244,6 +297,8 @@ def _run_playbook(playbook: str, limit: str | None = None) -> dict:
     cmd = ["ansible-playbook", "-i", inventory, playbook_path]
     if limit:
         cmd.extend(["--limit", limit])
+    if extra_vars:
+        cmd.extend(["-e", json.dumps(extra_vars)])
 
     try:
         result = subprocess.run(
@@ -297,6 +352,153 @@ def get_switches():
     return jsonify(switches)
 
 
+@app.route("/api/switches/import_inventory", methods=["POST"])
+def import_inventory():
+    """
+    Parse an Ansible inventory file (YAML or INI) from a given path on the server
+    and import any new hosts as switches.
+
+    Body: { "path": "/etc/ansible/hosts" }
+
+    Returns a summary of imported/skipped/failed hosts.
+    """
+    body = request.get_json(silent=True) or {}
+    inv_path = body.get("path", "").strip()
+    if not inv_path:
+        return jsonify({"error": "Field 'path' is required."}), 400
+    if not os.path.isabs(inv_path):
+        return jsonify({"error": "Path must be absolute (e.g. /etc/ansible/hosts)."}), 400
+    if not os.path.exists(inv_path):
+        return jsonify({"error": f"File not found: {inv_path}"}), 404
+
+    # ---- Parse the file ----
+    parsed_hosts: list[dict] = []
+    ext = os.path.splitext(inv_path)[1].lower()
+
+    try:
+        if ext in (".yml", ".yaml"):
+            import yaml  # PyYAML is already a transitive dep via ansible
+            with open(inv_path, "r") as fh:
+                data = yaml.safe_load(fh)
+            # Walk the YAML tree collecting hosts from any group
+            def _walk_yaml(node, collected):
+                if not isinstance(node, dict):
+                    return
+                hosts = node.get("hosts") or {}
+                if isinstance(hosts, dict):
+                    for hname, hvars in hosts.items():
+                        collected.append((hname, hvars or {}))
+                for key in ("children",):
+                    children = node.get(key) or {}
+                    if isinstance(children, dict):
+                        for child in children.values():
+                            _walk_yaml(child, collected)
+            raw: list[tuple] = []
+            _walk_yaml(data.get("all", data), raw)
+            for hname, hvars in raw:
+                parsed_hosts.append({
+                    "name": hname,
+                    "ip": hvars.get("ansible_host", hvars.get("ansible_ip", "")),
+                    "ssh_user": hvars.get("ansible_user", hvars.get("ansible_ssh_user", "")),
+                    "ssh_password": hvars.get("ansible_password", hvars.get("ansible_ssh_pass", "")),
+                    "ssh_key": hvars.get("ansible_ssh_private_key_file", ""),
+                })
+        else:
+            # INI format — simple line-by-line parser
+            import configparser
+            with open(inv_path, "r") as fh:
+                lines = fh.readlines()
+
+            current_group = None
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith(("#", ";")):
+                    continue
+                if line.startswith("[") and line.endswith("]"):
+                    current_group = line[1:-1].split(":")[0]
+                    continue
+                if current_group and current_group.endswith("vars"):
+                    continue
+                # host line: hostname [key=value ...]
+                parts = line.split()
+                if not parts:
+                    continue
+                hname = parts[0]
+                hvars: dict = {}
+                for part in parts[1:]:
+                    if "=" in part:
+                        k, _, v = part.partition("=")
+                        hvars[k.strip()] = v.strip().strip('"\'')
+                parsed_hosts.append({
+                    "name": hname,
+                    "ip": hvars.get("ansible_host", hvars.get("ansible_ip", "")),
+                    "ssh_user": hvars.get("ansible_user", hvars.get("ansible_ssh_user", "")),
+                    "ssh_password": hvars.get("ansible_password", hvars.get("ansible_ssh_pass", "")),
+                    "ssh_key": hvars.get("ansible_ssh_private_key_file", ""),
+                })
+    except Exception as e:
+        return jsonify({"error": f"Failed to parse inventory file: {e}"}), 422
+
+    if not parsed_hosts:
+        return jsonify({"error": "No hosts found in the inventory file."}), 422
+
+    # Deduplicate hosts by name within the parsed list
+    seen_names: set[str] = set()
+    unique_hosts: list[dict] = []
+    for h in parsed_hosts:
+        if h["name"] and h["name"] not in seen_names:
+            seen_names.add(h["name"])
+            unique_hosts.append(h)
+
+    imported: list[str] = []
+    skipped: list[str] = []
+    failed: list[dict] = []
+
+    with _file_lock:
+        switches = _load_switches()
+        existing_ids = {sw["id"] for sw in switches}
+
+        for h in unique_hosts:
+            name = h["name"]
+            switch_id = _slugify(name)
+            if not switch_id:
+                failed.append({"name": name, "reason": "Name produces an empty slug."})
+                continue
+            if switch_id in existing_ids:
+                skipped.append(name)
+                continue
+
+            new_switch = {
+                "id": switch_id,
+                "name": name,
+                "ip": h.get("ip") or "",
+                "model": "2530-24G",       # default model — user can edit later
+                "port_count": 24,
+                "ssh_user": h.get("ssh_user") or "",
+                "ssh_password": h.get("ssh_password") or "",
+                "ssh_key": h.get("ssh_key") or "",
+                "hostname": "",
+                "dhcp_vlan": None,
+                "ports": _generate_ports("2530-24G"),
+            }
+            switches.append(new_switch)
+            existing_ids.add(switch_id)
+            imported.append(name)
+
+        if imported:
+            _save_switches(switches)
+
+    return jsonify({
+        "imported": imported,
+        "skipped": skipped,
+        "failed": failed,
+        "total_found": len(unique_hosts),
+        "total_imported": len(imported),
+    })
+
+
+
+
 @app.route("/api/switches", methods=["POST"])
 def create_switch():
     """
@@ -339,6 +541,8 @@ def create_switch():
             "ssh_user": body["ssh_user"],
             "ssh_password": body.get("ssh_password", ""),
             "ssh_key": "",
+            "hostname": body.get("hostname", "").strip(),
+            "dhcp_vlan": int(body["dhcp_vlan"]) if str(body.get("dhcp_vlan", "")).strip().isdigit() else None,
             "ports": _generate_ports(model),
         }
 
@@ -373,9 +577,12 @@ def update_switch(switch_id: str):
 
         # Apply updates
         old_model = switch["model"]
-        for field in ("name", "ip", "model", "ssh_user", "ssh_password"):
+        for field in ("name", "ip", "model", "ssh_user", "ssh_password", "hostname"):
             if field in body:
-                switch[field] = body[field]
+                switch[field] = str(body[field]).strip() if field == "hostname" else body[field]
+        if "dhcp_vlan" in body:
+            val = str(body.get("dhcp_vlan", "")).strip()
+            switch["dhcp_vlan"] = int(val) if val.isdigit() else None
 
         # Handle SSH key content — only overwrite if new content provided
         ssh_key_content = body.get("ssh_key_content", "").strip()
@@ -404,6 +611,7 @@ def update_switch(switch_id: str):
 
         _save_switches(switches)
 
+    _do_generate()
     return jsonify(switch)
 
 
@@ -454,11 +662,13 @@ def update_ports(switch_id: str):
                 "name": str(entry.get("name", "")),
                 "untagged_vlan": int(entry.get("untagged_vlan", 1)),
                 "tagged_vlans": [int(v) for v in tagged],
+                "dhcp_snooping_trust": bool(entry.get("dhcp_snooping_trust", False)),
             })
 
         switch["ports"] = validated_ports
         _save_switches(switches)
 
+    _do_generate()
     return jsonify(switch)
 
 
@@ -509,6 +719,91 @@ def bootstrap(switch_id: str):
     return jsonify(result), code
 
 
+def _parse_vlan_range(val_str: str) -> list[int]:
+    """Parse a range string like '2-299' or '10, 15-20' into a list of ints."""
+    ids = []
+    for part in val_str.split(","):
+        part = part.strip()
+        if "-" in part:
+            pieces = part.split("-")
+            if len(pieces) == 2 and pieces[0].isdigit() and pieces[1].isdigit():
+                start, end = int(pieces[0]), int(pieces[1])
+                if 1 <= start <= 4094 and 1 <= end <= 4094:
+                    for v in range(min(start, end), max(start, end) + 1):
+                        if v != 1 and v not in ids:
+                            ids.append(v)
+        elif part.isdigit():
+            v = int(part)
+            if v != 1 and v not in ids:
+                ids.append(v)
+    return ids
+
+
+@app.route("/api/switches/<switch_id>/remove_vlans", methods=["POST"])
+def remove_vlans_switch(switch_id: str):
+    """Remove specific VLANs (or 2-299) from a switch."""
+    body = request.get_json(silent=True) or {}
+    target_vlans = str(body.get("target_vlans", "2-299")).strip()
+    if not target_vlans:
+        target_vlans = "2-299"
+    target_list = _parse_vlan_range(target_vlans)
+    with _file_lock:
+        switches = _load_switches()
+    switch = _find_switch(switches, switch_id)
+    if not switch:
+        return jsonify({"error": f"Switch '{switch_id}' not found."}), 404
+    result = _run_playbook("remove_vlans.yml", limit=switch["name"], extra_vars={"target_vlan_ids": target_list})
+    code = 200 if result["status"] == "success" else 500
+    return jsonify(result), code
+
+
+@app.route("/api/switches/<switch_id>/hostname", methods=["POST"])
+def set_hostname_switch(switch_id: str):
+    """Set the switch hostname in hardware and persist in data model."""
+    body = request.get_json(silent=True) or {}
+    new_host = str(body.get("hostname", "")).strip()
+    with _file_lock:
+        switches = _load_switches()
+        switch = _find_switch(switches, switch_id)
+        if not switch:
+            return jsonify({"error": f"Switch '{switch_id}' not found."}), 404
+        switch["hostname"] = new_host
+        _save_switches(switches)
+        _do_generate()
+
+    result = _run_playbook("set_hostname.yml", limit=switch["name"], extra_vars={"new_hostname": new_host})
+    code = 200 if result["status"] == "success" else 500
+    return jsonify({"result": result, "switch": switch}), code
+
+
+@app.route("/api/switches/<switch_id>/backup", methods=["GET", "POST"])
+def backup_config_switch(switch_id: str):
+    """Run backup_config.yml and return the raw running configuration for download."""
+    with _file_lock:
+        switches = _load_switches()
+    switch = _find_switch(switches, switch_id)
+    if not switch:
+        return jsonify({"error": f"Switch '{switch_id}' not found."}), 404
+
+    result = _run_playbook("backup_config.yml", limit=switch["name"])
+    if result["status"] != "success":
+        return jsonify(result), 500
+
+    backup_file = os.path.join(os.path.dirname(__file__), "data", "backups", f"{switch['name']}.cfg")
+    if not os.path.exists(backup_file):
+        return jsonify({"error": "Backup playbook succeeded but output file not found on server."}), 500
+
+    with open(backup_file, "r", encoding="utf-8", errors="ignore") as fh:
+        config_text = fh.read()
+
+    return jsonify({
+        "status": "success",
+        "filename": f"{switch['name']}_{switch.get('hostname', '') or switch['name']}_running_config.cfg",
+        "config": config_text
+    })
+
+
+
 @app.route("/api/deploy/status", methods=["GET"])
 def deploy_status():
     """Return the result of the most recent deployment run."""
@@ -543,13 +838,19 @@ def generate_playbook_preview():
         p.setdefault("name", "")
         p.setdefault("untagged_vlan", 1)
         p.setdefault("tagged_vlans", [])
+        p.setdefault("dhcp_snooping_trust", False)
+        p["tagged_vlans_str"] = _compress_vlan_range(p.get("tagged_vlans", []))
 
     # --- Render CLI commands from the Jinja2 template ---
     try:
         tpl_dir = os.path.join(ANSIBLE_DIR, "templates")
         env = Environment(loader=FileSystemLoader(tpl_dir))
         template = env.get_template("port_config.j2")
-        cli_commands = template.render(ports=ports).strip()
+        dhcp_val = str(data.get("dhcp_vlan", "")).strip()
+        dhcp_vlan = int(dhcp_val) if dhcp_val.isdigit() else None
+        with _file_lock:
+            vlan_names = _load_vlans()
+        cli_commands = template.render(ports=ports, dhcp_vlan=dhcp_vlan, custom_vlan_names=vlan_names).strip()
     except Exception as exc:
         return jsonify({"error": f"Template rendering failed: {exc}"}), 500
 
@@ -641,6 +942,70 @@ def download_playbook(filename):
     """Download a generated playbook file."""
     safe_name = os.path.basename(filename)
     return send_from_directory(GENERATED_DIR, safe_name, as_attachment=True)
+
+
+# ---------------------------------------------------------------------------
+# VLAN Names Management (Custom VLAN names e.g. 22 -> "22_Media")
+# ---------------------------------------------------------------------------
+def _load_vlans() -> dict:
+    """Load custom VLAN names and options from the JSON data file."""
+    if not os.path.exists(VLANS_FILE):
+        return {}
+    with open(VLANS_FILE, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    vlans = data.get("vlans", {})
+    normalized = {}
+    for vid_str, val in vlans.items():
+        if isinstance(val, dict):
+            normalized[str(vid_str)] = {"name": str(val.get("name", "")), "dhcp_bootp": bool(val.get("dhcp_bootp", False))}
+        else:
+            normalized[str(vid_str)] = {"name": str(val), "dhcp_bootp": False}
+    return normalized
+
+
+def _save_vlans(vlans: dict) -> None:
+    """Persist custom VLAN names to the JSON data file."""
+    _ensure_dirs()
+    with open(VLANS_FILE, "w", encoding="utf-8") as fh:
+        json.dump({"vlans": vlans}, fh, indent=2)
+
+
+@app.route("/api/vlans", methods=["GET"])
+def get_vlans():
+    """Return all stored custom VLAN names and options."""
+    with _file_lock:
+        vlans = _load_vlans()
+    return jsonify(vlans)
+
+
+@app.route("/api/vlans", methods=["PUT"])
+def update_vlans():
+    """Update custom VLAN names. Expects a JSON dict: {"10": {"name": "Management", "dhcp_bootp": True}} or legacy format"""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "Request body must be a dictionary of VLAN IDs to properties."}), 400
+
+    clean_vlans = {}
+    for vid, val in body.items():
+        vid_str = str(vid).strip()
+        if vid_str.isdigit() and 1 <= int(vid_str) <= 299:
+            if isinstance(val, dict):
+                name_str = str(val.get("name", "")).strip()
+                dhcp_bootp = bool(val.get("dhcp_bootp", False))
+                if name_str or dhcp_bootp:
+                    clean_vlans[vid_str] = {"name": name_str, "dhcp_bootp": dhcp_bootp}
+            else:
+                name_str = str(val).strip()
+                if name_str:
+                    clean_vlans[vid_str] = {"name": name_str, "dhcp_bootp": False}
+
+    with _file_lock:
+        _save_vlans(clean_vlans)
+    
+    # Re-generate Ansible host_vars with new names
+    _do_generate()
+
+    return jsonify({"status": "ok", "vlans": clean_vlans})
 
 
 # ---------------------------------------------------------------------------
