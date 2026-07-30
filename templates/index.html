@@ -34,8 +34,8 @@
         <button id="btn-generate" class="btn btn-secondary" onclick="generateConfig()">
           <span class="btn-icon">⚙</span> Generate Config
         </button>
-        <button id="btn-deploy-all" class="btn btn-primary" onclick="deployAll()">
-          <span class="btn-icon">🚀</span> Deploy All
+        <button id="btn-deploy-selected" class="btn btn-primary" onclick="deploySelectedSwitches()" title="Ausgewählte Switches per Ansible konfigurieren">
+          <span class="btn-icon">🚀</span> Deploy Ausgewählte (<span id="selected-count">0</span>)
         </button>
       </div>
     </div>
@@ -49,7 +49,13 @@
           <span class="sidebar-search-icon">🔍</span>
           <input type="text" id="sidebar-search" placeholder="Switch suchen…" oninput="filterSidebarSwitches(this.value)" autocomplete="off">
         </div>
-        <div id="sidebar-count" class="sidebar-count">0 Switches</div>
+        <div class="sidebar-select-bar">
+          <label class="sidebar-select-label" title="Alle angezeigten Switches auswählen / abwählen">
+            <input type="checkbox" id="check-all-sidebar" onchange="toggleSelectAllSwitches(this.checked)">
+            <span>Alle</span>
+          </label>
+          <span id="sidebar-count" class="sidebar-count">0 Switches</span>
+        </div>
       </div>
       <div id="sidebar-list" class="sidebar-list">
         <!-- dynamically populated -->
@@ -74,7 +80,6 @@
           <button class="btn btn-sm btn-secondary" onclick="renameCurrentSwitchHostname()" title="Switch Hostname benennen / ändern">🏷️ Hostname</button>
           <button class="btn btn-sm btn-secondary" onclick="backupCurrentSwitchConfig()" title="Komplette Konfiguration (show running-config) als Datei herunterladen">📥 Backup</button>
           <button class="btn btn-sm btn-secondary" onclick="editCurrentSwitch()">✏️ Edit</button>
-          <button class="btn btn-sm btn-warning" onclick="bootstrapCurrentSwitch()">⚡ Bootstrap</button>
           <button class="btn btn-sm btn-danger" onclick="removeVlansFromSwitch()" title="Benutzerdefinierte VLANs vom Switch löschen">🧹 VLANs löschen</button>
           <button class="btn btn-sm btn-primary" onclick="deployCurrentSwitch()">🚀 Deploy</button>
           <button class="btn btn-sm btn-danger" onclick="deleteCurrentSwitch()">🗑️ Delete</button>

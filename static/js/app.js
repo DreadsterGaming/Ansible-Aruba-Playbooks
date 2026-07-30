@@ -124,8 +124,45 @@ function getSwitch(id) {
   return switches.find(s => s.id === id);
 }
 
-// --- Tabs ---
-let _sidebarFilter = '';
+let selectedSwitchIds = new Set();
+
+function toggleSelectSwitch(id, checked) {
+  if (checked) {
+    selectedSwitchIds.add(id);
+  } else {
+    selectedSwitchIds.delete(id);
+  }
+  updateSelectedCountUI();
+}
+
+function toggleSelectAllSwitches(checked) {
+  const q = _sidebarFilter.toLowerCase();
+  const visible = switches.filter(sw =>
+    sw.name.toLowerCase().includes(q) ||
+    (sw.ip || '').includes(q) ||
+    (sw.hostname || '').toLowerCase().includes(q)
+  );
+
+  visible.forEach(sw => {
+    if (checked) {
+      selectedSwitchIds.add(sw.id);
+    } else {
+      selectedSwitchIds.delete(sw.id);
+    }
+  });
+
+  renderTabs();
+  updateSelectedCountUI();
+}
+
+function updateSelectedCountUI() {
+  const el = document.getElementById('selected-count');
+  if (el) el.textContent = selectedSwitchIds.size;
+  const masterCheck = document.getElementById('check-all-sidebar');
+  if (masterCheck && switches.length > 0) {
+    masterCheck.checked = selectedSwitchIds.size > 0 && switches.every(sw => selectedSwitchIds.has(sw.id));
+  }
+}
 
 function renderTabs() {
   // Render into sidebar list instead of horizontal tabs
@@ -147,12 +184,24 @@ function renderTabs() {
     const status = switchStatus[sw.id] || 'unknown';
     const dotClass = status === 'online' ? 'status-dot online' :
                      status === 'offline' ? 'status-dot offline' : 'status-dot unknown';
+    const isChecked = selectedSwitchIds.has(sw.id);
+
     const item = document.createElement('button');
     item.className = 'sidebar-item' + (sw.id === activeSwitch ? ' active' : '');
     item.innerHTML =
       '<span class="' + dotClass + '"></span>' +
-      '<span class="sidebar-item-name">' + sw.name + '</span>' +
-      '<span class="sidebar-item-ip">' + (sw.ip || '—') + '</span>';
+      '<input type="checkbox" class="sidebar-switch-check"' + (isChecked ? ' checked' : '') + ' title="Diesen Switch zum Deployen markieren">' +
+      '<div class="sidebar-item-info">' +
+        '<span class="sidebar-item-name">' + sw.name + '</span>' +
+        '<span class="sidebar-item-ip">' + (sw.ip || '—') + '</span>' +
+      '</div>';
+
+    const chk = item.querySelector('.sidebar-switch-check');
+    chk.onclick = (e) => {
+      e.stopPropagation();
+      toggleSelectSwitch(sw.id, chk.checked);
+    };
+
     item.onclick = () => selectSwitch(sw.id);
     list.appendChild(item);
   });
@@ -163,6 +212,8 @@ function renderTabs() {
     empty.textContent = 'Kein Treffer für "' + q + '"';
     list.appendChild(empty);
   }
+
+  updateSelectedCountUI();
 }
 
 function filterSidebarSwitches(value) {
@@ -594,22 +645,34 @@ async function generateConfig() {
 }
 
 // --- Deploy ---
-async function deployAll() {
-  if (!confirm('Deploy port configuration to ALL switches?')) return;
+async function deploySelectedSwitches() {
+  if (selectedSwitchIds.size === 0) {
+    showToast('Bitte markiere mindestens einen Switch mit der Checkbox in der Seitenleiste.', 'error');
+    return;
+  }
+  const count = selectedSwitchIds.size;
+  if (!confirm(`Konfiguration auf ${count} ausgewählte(n) Switch(es) deployen?`)) return;
 
-  const btn = document.getElementById('btn-deploy-all');
+  const btn = document.getElementById('btn-deploy-selected');
   const origHTML = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = '<span class="btn-icon">⏳</span> Deploying…';
+  btn.innerHTML = '<span class="btn-icon">⏳</span> Deploying (' + count + ')…';
+
+  showToast('⏳ Speichere aktive Konfiguration und starte Deploy auf ' + count + ' Switch(es)...', 'info');
+  await savePorts(true);
 
   try {
-    const response = await fetch('/api/deploy', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    const response = await fetch('/api/deploy/selected', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ switch_ids: Array.from(selectedSwitchIds) })
+    });
     const res = await response.json();
     showDeployLog(res.output || res.error || 'No output');
     if (res.status === 'success') {
-      showToast('Deployment successful!', 'success');
+      showToast('Deploy auf ' + count + ' Switch(es) erfolgreich!', 'success');
     } else {
-      showToast('Deployment finished with errors', 'error');
+      showToast('Deploy beendet mit Fehlern', 'error');
     }
   } catch (err) {
     showDeployLog('Connection error: ' + err.message);

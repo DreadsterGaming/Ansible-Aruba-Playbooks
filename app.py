@@ -747,6 +747,34 @@ def deploy_all():
     return jsonify(result), code
 
 
+@app.route("/api/deploy/selected", methods=["POST"])
+def deploy_selected():
+    """Run the configure_ports playbook against a selected list of switches."""
+    body = request.get_json(silent=True) or {}
+    switch_ids = body.get("switch_ids", [])
+    if not switch_ids:
+        return jsonify({"error": "No switches selected for deployment."}), 400
+
+    with _file_lock:
+        switches = _load_switches()
+
+    target_names = []
+    for sid in switch_ids:
+        sw = _find_switch(switches, sid)
+        if sw:
+            target_names.append(sw["name"])
+        elif any(s["name"] == sid for s in switches):
+            target_names.append(sid)
+
+    if not target_names:
+        return jsonify({"error": "None of the selected switches were found."}), 404
+
+    limit_str = ",".join(target_names)
+    result = _run_playbook("configure_ports.yml", limit=limit_str)
+    code = 200 if result["status"] == "success" else 500
+    return jsonify(result), code
+
+
 @app.route("/api/deploy/<switch_id>", methods=["POST"])
 def deploy_single(switch_id: str):
     """Run the configure_ports playbook for a single switch."""
