@@ -120,7 +120,10 @@ async function apiCall(url, method = 'GET', body = null) {
     throw new Error('Ungültiges Format vom Server empfangen');
   }
   if (!res.ok) {
-    throw new Error(data.error || `HTTP ${res.status}`);
+    const errorMsg = data.error || (data.output ? "Ansible Playbook fehlgeschlagen" : `HTTP ${res.status}`);
+    const err = new Error(errorMsg);
+    err.data = data;
+    throw err;
   }
   return data;
 }
@@ -1081,15 +1084,19 @@ async function deploySSHKeys() {
 
   try {
     const res = await apiCall('/api/ssh-keys/deploy', 'POST');
+    if (res.status === 'failed' || res.status === 'error') {
+      throw { message: 'Ansible Playbook fehlgeschlagen', data: res };
+    }
     showDeployLog(res.output || 'No output');
     closeSSHKeysModal();
-    if (res.status === 'success') {
-      showToast('SSH Keys erfolgreich auf alle Switches deployed!', 'success');
-    } else {
-      showToast('Deploy mit Fehlern abgeschlossen.', 'error');
-    }
+    showToast('SSH Keys erfolgreich auf alle Switches deployed!', 'success');
   } catch (err) {
     showToast('Deploy fehlgeschlagen: ' + err.message, 'error');
+    if (err.data && err.data.output) {
+      showDeployLog(err.data.output);
+    } else if (err.data) {
+      showDeployLog(JSON.stringify(err.data, null, 2));
+    }
   } finally {
     btn.disabled = false;
     btn.textContent = origText;
@@ -1281,10 +1288,18 @@ async function removeVlansFromSwitch() {
   
   try {
     const res = await apiCall('/api/switches/' + activeSwitch + '/remove_vlans', 'POST', { target_vlans: target.trim() });
-    showDeployLog(res);
+    if (res.status === 'failed' || res.status === 'error') {
+      throw { message: 'Ansible Playbook fehlgeschlagen', data: res };
+    }
+    showDeployLog(res.output || JSON.stringify(res, null, 2));
     showToast(`VLANs (${target}) erfolgreich vom Switch entfernt!`, 'success');
   } catch (err) {
     showToast('Fehler beim Löschen der VLANs: ' + err.message, 'error');
+    if (err.data && err.data.output) {
+      showDeployLog(err.data.output);
+    } else if (err.data) {
+      showDeployLog(JSON.stringify(err.data, null, 2));
+    }
   }
 }
 
