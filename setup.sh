@@ -71,10 +71,10 @@ fi
 echo "   ✅ Python dependencies installed"
 
 # --- Install Ansible collections ---
-echo "📚 Installing Ansible collections..."
-"$APP_DIR/venv/bin/ansible-galaxy" collection install ansible.netcommon --force > /dev/null 2>&1
-"$APP_DIR/venv/bin/ansible-galaxy" collection install arubanetworks.aos_switch --force > /dev/null 2>&1 || echo "   ⚠️  arubanetworks.aos_switch collection may need manual install"
-echo "   ✅ Ansible collections installed"
+echo "📚 Installing Ansible collections (timeout 15s)..."
+"$APP_DIR/venv/bin/ansible-galaxy" collection install ansible.netcommon --timeout 15 > /dev/null 2>&1 || echo "   ⚠️  ansible.netcommon skipped/already present"
+"$APP_DIR/venv/bin/ansible-galaxy" collection install arubanetworks.aos_switch --timeout 15 > /dev/null 2>&1 || echo "   ⚠️  arubanetworks.aos_switch skipped/already present"
+echo "   ✅ Ansible collections checked"
 
 deactivate
 
