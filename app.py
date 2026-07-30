@@ -219,10 +219,13 @@ def _generate_host_vars_yaml(switch: dict, vlan_names: dict = None) -> str:
     """Build the host_vars YAML for a single switch's port configuration."""
     lines = ["ports:"]
     for p in switch.get("ports", []):
-        lines.append(f"  - port: {p['port']}")
-        lines.append(f"    name: {_yaml_quote(p.get('name', ''))}")
-        lines.append(f"    untagged_vlan: {p['untagged_vlan']}")
-        tagged = p.get("tagged_vlans", [])
+        port_num = p.get("port", 1)
+        name_str = _yaml_quote(p.get("name", ""))
+        untagged = p.get("untagged_vlan", 1) or 1
+        lines.append(f"  - port: {port_num}")
+        lines.append(f"    name: {name_str}")
+        lines.append(f"    untagged_vlan: {untagged}")
+        tagged = p.get("tagged_vlans", []) or []
         if tagged:
             tag_items = ", ".join(str(v) for v in tagged)
             lines.append(f"    tagged_vlans: [{tag_items}]")
@@ -240,7 +243,7 @@ def _generate_host_vars_yaml(switch: dict, vlan_names: dict = None) -> str:
         lines.append(f"switch_hostname: {_yaml_quote(str(hostname_val))}")
     if vlan_names:
         lines.append("custom_vlan_names:")
-        for vid, val in sorted(vlan_names.items(), key=lambda x: int(x[0]) if x[0].isdigit() else str(x[0])):
+        for vid, val in sorted(vlan_names.items(), key=lambda x: int(x[0]) if str(x[0]).isdigit() else str(x[0])):
             if isinstance(val, dict):
                 lines.append(f"  {_yaml_quote(str(vid))}:")
                 lines.append(f"    name: {_yaml_quote(val.get('name', ''))}")
@@ -1193,6 +1196,12 @@ def deploy_ssh_keys():
     _last_deploy = deploy_result
     code = 200 if status == "success" else 500
     return jsonify(deploy_result), code
+
+
+@app.errorhandler(Exception)
+def handle_global_exception(e):
+    """Ensure any unhandled exception returns a clean JSON 500 error message."""
+    return jsonify({"error": f"Server Error: {str(e)}"}), 500
 
 
 # ---------------------------------------------------------------------------
