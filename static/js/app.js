@@ -93,7 +93,17 @@ async function apiCall(url, method = 'GET', body = null) {
     opts.body = JSON.stringify(body);
   }
   const res = await fetch(url, opts);
-  const data = await res.json();
+  const text = await res.text();
+  let data = {};
+  try {
+    data = JSON.parse(text);
+  } catch (_) {
+    if (!res.ok) {
+      const cleanMsg = text.replace(/<[^>]*>?/gm, '').trim();
+      throw new Error(`Server Error ${res.status}: ${cleanMsg.substring(0, 120)}`);
+    }
+    throw new Error('Ungültiges Format vom Server empfangen');
+  }
   if (!res.ok) {
     throw new Error(data.error || `HTTP ${res.status}`);
   }
@@ -513,21 +523,21 @@ async function submitSwitchForm(event) {
   btn.textContent = '⏳ Saving…';
 
   try {
+    let targetId = switchId;
     if (isEdit) {
-      await apiCall('/api/switches/' + switchId, 'PUT', payload);
+      const updated = await apiCall('/api/switches/' + switchId, 'PUT', payload);
+      targetId = (updated && updated.id) ? updated.id : switchId;
       showToast('Switch updated!', 'success');
     } else {
       const created = await apiCall('/api/switches', 'POST', payload);
+      targetId = created.id;
       showToast('Switch "' + created.name + '" added!', 'success');
     }
     closeSwitchModal();
     await fetchSwitches();
     renderTabs();
-
-    if (isEdit) {
-      selectSwitch(switchId);
-    } else if (switches.length === 1) {
-      selectSwitch(switches[0].id);
+    if (targetId) {
+      selectSwitch(targetId);
     }
   } catch (err) {
     showToast('Error: ' + err.message, 'error');

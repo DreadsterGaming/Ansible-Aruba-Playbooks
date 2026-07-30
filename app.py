@@ -150,8 +150,11 @@ def _get_ssh_key_path(switch_id: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Helpers — YAML generation (manual, no pyyaml dependency)
 # ---------------------------------------------------------------------------
-def _yaml_quote(value: str) -> str:
+def _yaml_quote(value) -> str:
     """Quote a YAML string value if it contains special characters."""
+    if value is None:
+        return '""'
+    value = str(value)
     if not value:
         return '""'
     needs_quoting = any(ch in value for ch in (":", "{", "}", "[", "]", ",", "&", "*", "#", "?", "|", "-", "<", ">", "=", "!", "%", "@", "\\", "'", '"'))
