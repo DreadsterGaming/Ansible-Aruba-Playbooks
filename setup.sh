@@ -63,8 +63,11 @@ echo "🐍 Setting up Python virtual environment..."
 python3 -m venv "$APP_DIR/venv"
 source "$APP_DIR/venv/bin/activate"
 pip install --quiet --upgrade pip
-pip install --quiet flask
-pip install --quiet ansible-core
+if [ -f "$APP_DIR/requirements.txt" ]; then
+  pip install --quiet -r "$APP_DIR/requirements.txt"
+else
+  pip install --quiet flask ansible-core pyyaml
+fi
 echo "   ✅ Python dependencies installed"
 
 # --- Install Ansible collections ---
@@ -77,10 +80,17 @@ deactivate
 
 # --- Set ownership ---
 chown -R "$APP_USER":"$APP_USER" "$APP_DIR"
-# Data dir needs write access
-chmod -R 755 "$APP_DIR"
-chmod -R 775 "$APP_DIR/data"
-chmod -R 775 "$APP_DIR/ansible/inventory"
+chmod -R 775 "$APP_DIR"
+
+# --- Open Firewall Port 5000 ---
+if command -v ufw >/dev/null 2>&1; then
+  echo "🛡️  Configuring UFW firewall for port 5000..."
+  ufw allow 5000/tcp >/dev/null 2>&1 || true
+elif command -v firewall-cmd >/dev/null 2>&1; then
+  echo "🛡️  Configuring Firewalld for port 5000..."
+  firewall-cmd --add-port=5000/tcp --permanent >/dev/null 2>&1 || true
+  firewall-cmd --reload >/dev/null 2>&1 || true
+fi
 
 # --- Create systemd service ---
 echo "⚙️  Creating systemd service..."
@@ -101,8 +111,8 @@ RestartSec=5
 
 # Security hardening
 NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=$APP_DIR/data $APP_DIR/ansible/inventory
+ProtectSystem=full
+ReadWritePaths=$APP_DIR
 
 [Install]
 WantedBy=multi-user.target
@@ -111,7 +121,7 @@ EOF
 # --- Enable & start service ---
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
-systemctl start "$SERVICE_NAME"
+systemctl restart "$SERVICE_NAME"
 echo "   ✅ Service created and started"
 
 # --- Get server IP ---
