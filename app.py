@@ -61,13 +61,25 @@ def _ensure_dirs():
 
 
 def _load_switches() -> list[dict]:
-    """Load the switches list from the JSON data file."""
+    """Load the switches list from the JSON data file and filter corrupt entries."""
     _ensure_dirs()
     if not os.path.exists(DATA_FILE):
         return []
     with open(DATA_FILE, "r") as fh:
         data = json.load(fh)
-    return data.get("switches", [])
+    switches = data.get("switches", [])
+    valid_switches = []
+    modified = False
+    for sw in switches:
+        name = str(sw.get("name", "")).strip()
+        sw_id = str(sw.get("id", "")).strip()
+        if not name or not sw_id or "=" in name or "/" in name or "\\" in name or name.startswith("ansible_"):
+            modified = True
+            continue
+        valid_switches.append(sw)
+    if modified:
+        _save_switches(valid_switches)
+    return valid_switches
 
 
 def _save_switches(switches: list[dict]) -> None:
@@ -275,14 +287,22 @@ def _do_generate() -> dict:
         fh.write(_generate_inventory_yaml(switches))
 
     # Clean stale host_vars files
+    def _safe_fn(name: str) -> str:
+        return re.sub(r'[^a-zA-Z0-9_.-]', '_', str(name)) + ".yml"
+
     existing_vars = set(os.listdir(HOST_VARS_DIR)) if os.path.isdir(HOST_VARS_DIR) else set()
-    expected_vars = {f"{sw['name']}.yml" for sw in switches}
+    expected_vars = {_safe_fn(sw['name']) for sw in switches}
     for stale in existing_vars - expected_vars:
-        os.remove(os.path.join(HOST_VARS_DIR, stale))
+        stale_path = os.path.join(HOST_VARS_DIR, stale)
+        if os.path.isfile(stale_path):
+            try:
+                os.remove(stale_path)
+            except Exception:
+                pass
 
     # Write per-switch host_vars
     for sw in switches:
-        path = os.path.join(HOST_VARS_DIR, f"{sw['name']}.yml")
+        path = os.path.join(HOST_VARS_DIR, _safe_fn(sw['name']))
         with open(path, "w") as fh:
             fh.write(_generate_host_vars_yaml(sw, vlan_names=vlan_names))
 
@@ -443,21 +463,23 @@ def import_inventory():
             with open(inv_path, "r") as fh:
                 lines = fh.readlines()
 
-            current_group = None
+            is_vars_section = False
             for line in lines:
                 line = line.strip()
                 if not line or line.startswith(("#", ";")):
                     continue
                 if line.startswith("[") and line.endswith("]"):
-                    current_group = line[1:-1].split(":")[0]
+                    hdr = line[1:-1].strip()
+                    is_vars_section = ":vars" in hdr or hdr.endswith("vars") or ":children" in hdr
                     continue
-                if current_group and current_group.endswith("vars"):
+                if is_vars_section:
                     continue
-                # host line: hostname [key=value ...]
                 parts = line.split()
                 if not parts:
                     continue
-                hname = parts[0]
+                hname = parts[0].strip()
+                if "=" in hname or "/" in hname or "\\" in hname or hname.startswith("ansible_"):
+                    continue
                 hvars: dict = {}
                 for part in parts[1:]:
                     if "=" in part:
